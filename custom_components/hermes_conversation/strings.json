@@ -49,6 +49,9 @@
     },
     "invalid_auth": {
       "message": "Hermes rejected the API key. Reconfigure the integration to enter a new one."
+    },
+    "empty_response": {
+      "message": "Hermes returned an empty response."
     }
   },
   "config_subentries": {

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
+from collections.abc import AsyncIterator
 from http import HTTPStatus
 from typing import Any
 
@@ -11,6 +14,11 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import REQUEST_TIMEOUT, VALIDATE_TIMEOUT
+
+_LOGGER = logging.getLogger(__name__)
+
+SSE_DATA_PREFIX = "data: "
+SSE_DONE = "[DONE]"
 
 
 class HermesError(Exception):
@@ -64,27 +72,31 @@ class HermesClient:
             raise HermesConnectionError("Malformed model list")
         return [item["id"] for item in data if isinstance(item, dict) and "id" in item]
 
-    async def async_chat(
+    async def async_stream_chat(
         self,
         model: str,
         messages: list[dict[str, str]],
         timeout: int = REQUEST_TIMEOUT,
-    ) -> str:
-        """Send a chat completion and return the assistant's reply."""
-        payload = await self._request(
-            "POST",
-            "chat/completions",
-            json={"model": model, "messages": messages, "stream": False},
-            timeout=timeout,
-        )
-        try:
-            answer = payload["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as err:
-            raise HermesConnectionError("Malformed completion response") from err
+    ) -> AsyncIterator[str]:
+        """Yield reply fragments as Hermes produces them."""
+        body = {"model": model, "messages": messages, "stream": True}
 
-        if not isinstance(answer, str) or not answer.strip():
-            raise HermesConnectionError("Hermes returned an empty response")
-        return answer.strip()
+        try:
+            async with asyncio.timeout(timeout):
+                async with self._session.post(
+                    f"{self.profile_url}/chat/completions",
+                    headers=self._headers,
+                    json=body,
+                ) as response:
+                    if response.status == HTTPStatus.UNAUTHORIZED:
+                        raise HermesAuthError("Hermes rejected the API key")
+                    response.raise_for_status()
+
+                    async for raw in response.content:
+                        if (chunk := _parse_sse_line(raw)) is not None:
+                            yield chunk
+        except (TimeoutError, aiohttp.ClientError) as err:
+            raise HermesConnectionError(str(err) or type(err).__name__) from err
 
     async def _request(
         self,
@@ -110,3 +122,27 @@ class HermesClient:
             raise HermesConnectionError(str(err) or type(err).__name__) from err
 
         return result
+
+
+def _parse_sse_line(raw: bytes) -> str | None:
+    """Return the text of one SSE frame, or None when it carries no content.
+
+    A single malformed frame is dropped rather than failing the turn: losing a
+    fragment degrades the answer, but aborting loses all of it.
+    """
+    line = raw.decode("utf-8", errors="replace").strip()
+    if not line.startswith(SSE_DATA_PREFIX):
+        return None
+
+    payload = line.removeprefix(SSE_DATA_PREFIX).strip()
+    if not payload or payload == SSE_DONE:
+        return None
+
+    try:
+        delta = json.loads(payload)["choices"][0]["delta"]
+    except ValueError, KeyError, IndexError, TypeError:
+        _LOGGER.debug("Skipping malformed stream frame: %s", payload[:120])
+        return None
+
+    content = delta.get("content")
+    return content if isinstance(content, str) and content else None

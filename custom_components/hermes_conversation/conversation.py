@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncGenerator, AsyncIterator
 from typing import Literal, override
 
 from homeassistant.components import conversation
@@ -25,6 +26,15 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+async def _transform_stream(
+    fragments: AsyncIterator[str],
+) -> AsyncGenerator[conversation.AssistantContentDeltaDict]:
+    """Adapt Hermes text fragments to the chat log's delta protocol."""
+    yield {"role": "assistant"}
+    async for fragment in fragments:
+        yield {"content": fragment}
 
 
 async def async_setup_entry(
@@ -50,6 +60,7 @@ class HermesConversationEntity(
 
     _attr_has_entity_name = True
     _attr_name = None
+    _attr_supports_streaming = True
 
     def __init__(self, entry: HermesConfigEntry, subentry: ConfigSubentry) -> None:
         """Initialize the Hermes conversation entity."""
@@ -104,12 +115,17 @@ class HermesConversationEntity(
         ]
 
         options = self.subentry.data
+        stream = self.entry.runtime_data.async_stream_chat(
+            options.get(CONF_MODEL, DEFAULT_MODEL),
+            messages,
+            timeout=int(options.get(CONF_TIMEOUT, REQUEST_TIMEOUT)),
+        )
+
         try:
-            answer = await self.entry.runtime_data.async_chat(
-                options.get(CONF_MODEL, DEFAULT_MODEL),
-                messages,
-                timeout=int(options.get(CONF_TIMEOUT, REQUEST_TIMEOUT)),
-            )
+            async for _content in chat_log.async_add_delta_content_stream(
+                user_input.agent_id, _transform_stream(stream)
+            ):
+                pass
         except HermesAuthError as err:
             # Raising ConfigEntryAuthFailed here would not reach HA's reauth
             # machinery: async_converse catches it as a plain HomeAssistantError
@@ -124,7 +140,15 @@ class HermesConversationEntity(
                 translation_domain=DOMAIN, translation_key="cannot_connect"
             ) from err
 
-        chat_log.async_add_assistant_content_without_tools(
-            conversation.AssistantContent(agent_id=user_input.agent_id, content=answer)
-        )
+        # A stream of whitespace still produces AssistantContent, so the chat
+        # log helper would treat it as a valid — but silent — answer.
+        last = chat_log.content[-1]
+        if (
+            isinstance(last, conversation.AssistantContent)
+            and not (last.content or "").strip()
+        ):
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="empty_response"
+            )
+
         return conversation.async_get_result_from_chat_log(user_input, chat_log)

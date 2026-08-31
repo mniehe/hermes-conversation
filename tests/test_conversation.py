@@ -16,12 +16,13 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClien
 from custom_components.hermes_conversation.client import HermesClient
 from custom_components.hermes_conversation.const import DOMAIN
 
+from . import sse
 from .conftest import EntryLoader
 from .const import COMPLETIONS_URL
 
 
-def _reply(text: str) -> dict:
-    return {"choices": [{"message": {"role": "assistant", "content": text}}]}
+def _reply(text: str) -> bytes:
+    return sse.reply(text)
 
 
 def _entity_id(hass: HomeAssistant, entry: MockConfigEntry) -> str:
@@ -63,7 +64,7 @@ async def test_successful_reply(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
 ) -> None:
     entry = await load_entry()
-    aioclient_mock.post(COMPLETIONS_URL, json=_reply("The kitchen light is on."))
+    aioclient_mock.post(COMPLETIONS_URL, content=_reply("The kitchen light is on."))
 
     result = await _converse(hass, "is the light on", _entity_id(hass, entry))
 
@@ -89,7 +90,7 @@ async def test_continue_conversation_follows_core(
 ) -> None:
     """Follow-up detection is core's, via the chat log, not our own rule."""
     entry = await load_entry()
-    aioclient_mock.post(COMPLETIONS_URL, json=_reply(answer))
+    aioclient_mock.post(COMPLETIONS_URL, content=_reply(answer))
 
     result = await _converse(hass, "hello", _entity_id(hass, entry))
 
@@ -113,7 +114,7 @@ async def test_empty_reply_is_an_error_response(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
 ) -> None:
     entry = await load_entry()
-    aioclient_mock.post(COMPLETIONS_URL, json=_reply("   "))
+    aioclient_mock.post(COMPLETIONS_URL, content=_reply("   "))
 
     result = await _converse(hass, "hello", _entity_id(hass, entry))
 
@@ -141,7 +142,7 @@ async def test_configured_model_is_sent(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
 ) -> None:
     entry = await load_entry({CONF_MODEL: "home-assist"})
-    aioclient_mock.post(COMPLETIONS_URL, json=_reply("ok"))
+    aioclient_mock.post(COMPLETIONS_URL, content=_reply("ok"))
 
     await _converse(hass, "hello", _entity_id(hass, entry))
 
@@ -153,7 +154,7 @@ async def test_configured_prompt_leads_the_transcript(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
 ) -> None:
     entry = await load_entry({CONF_PROMPT: "You are terse."})
-    aioclient_mock.post(COMPLETIONS_URL, json=_reply("ok"))
+    aioclient_mock.post(COMPLETIONS_URL, content=_reply("ok"))
 
     await _converse(hass, "hello", _entity_id(hass, entry))
 
@@ -166,7 +167,7 @@ async def test_no_prompt_sends_no_system_message(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
 ) -> None:
     entry = await load_entry()
-    aioclient_mock.post(COMPLETIONS_URL, json=_reply("ok"))
+    aioclient_mock.post(COMPLETIONS_URL, content=_reply("ok"))
 
     await _converse(hass, "hello", _entity_id(hass, entry))
 
@@ -180,14 +181,14 @@ async def test_configured_timeout_is_applied(
     """A short timeout must actually bound the request."""
     entry = await load_entry({CONF_TIMEOUT: 10})
     captured: list[int] = []
-    original = HermesClient._request
+    original = HermesClient.async_stream_chat
 
-    async def _spy(self, method, path, *, timeout, json=None):
+    def _spy(self, model, messages, timeout=None):
         captured.append(timeout)
-        return await original(self, method, path, timeout=timeout, json=json)
+        return original(self, model, messages, timeout=timeout)
 
-    aioclient_mock.post(COMPLETIONS_URL, json=_reply("ok"))
-    with patch.object(HermesClient, "_request", _spy):
+    aioclient_mock.post(COMPLETIONS_URL, content=_reply("ok"))
+    with patch.object(HermesClient, "async_stream_chat", _spy):
         await _converse(hass, "hello", _entity_id(hass, entry))
 
     assert captured == [10]

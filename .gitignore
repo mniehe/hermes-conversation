@@ -1,3 +1,7 @@
 __pycache__/
 *.pyc
 .venv/
+
+.direnv/
+.venv/
+uv.lock

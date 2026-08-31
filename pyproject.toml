@@ -1,0 +1,43 @@
+[project]
+name = "hermes-conversation"
+version = "0.1.0"
+description = "Home Assistant conversation agent backed by a Hermes profile"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Mark Niehe" }]
+requires-python = ">=3.14"
+
+[dependency-groups]
+dev = [
+  "pytest-homeassistant-custom-component==0.13.356",
+  "aioresponses>=0.7.6",
+  "ruff>=0.14",
+  "mypy>=1.14",
+]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "RET", "PL", "RUF", "ANN", "D"]
+ignore = ["D203", "D213", "ANN401"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D", "ANN", "PLR2004"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+warn_unreachable = true
+disallow_untyped_defs = true
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

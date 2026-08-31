@@ -26,5 +26,7 @@ DEFAULT_MODEL: Final = "hermes-agent"
 SUBENTRY_TYPE_CONVERSATION: Final = "conversation"
 DEFAULT_CONVERSATION_NAME: Final = "Hermes"
 
+ISSUE_PROFILE_IGNORED: Final = "profile_ignored"
+
 MIN_TIMEOUT: Final = 10
 MAX_TIMEOUT: Final = 300

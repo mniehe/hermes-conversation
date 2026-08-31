@@ -113,9 +113,9 @@ Reading is unaffected. "Is the front door locked?" still answers.
 - A reachable Hermes gateway with `gateway.api_server.enabled: true`
 - For named profiles: `gateway.multiplex_profiles: true`, so `/p/<profile>/`
   resolves. **With it off, Hermes silently ignores the prefix and every request
-  lands on the default profile** — setup will still succeed, and you will be
-  talking to the wrong profile with nothing to indicate it. Check this first if
-  an agent answers as the wrong persona.
+  lands on the default profile.** Nothing fails, so this integration probes for
+  it on setup and raises a repair warning rather than letting an agent quietly
+  answer as the wrong persona.
 
 ## Roadmap
 
@@ -124,7 +124,7 @@ Reading is unaffected. "Is the front door locked?" still answers.
 | ✅ | Streaming chat, per-profile entries, reauth and reconfigure |
 | ✅ | Agents configurable in the UI: model, system prompt, timeout |
 | ✅ | Restricted LLM API for MCP, with locks and doors withheld |
-| ✅ | Diagnostics and a repair check for the boundary |
+| ✅ | Diagnostics, and repair checks for the boundary and profile routing |
 | ⬜ | `ai_task` support |
 
 ## Development

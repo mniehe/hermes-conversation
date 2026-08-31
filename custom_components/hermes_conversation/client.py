@@ -17,6 +17,11 @@ from .const import REQUEST_TIMEOUT, VALIDATE_TIMEOUT
 
 _LOGGER = logging.getLogger(__name__)
 
+# A profile nobody would configure. Hermes rejects an unknown profile with 404
+# when multiplexing is on, and ignores the prefix entirely when it is off — so a
+# success here means the configured profile is not being honoured either.
+PROBE_PROFILE = "hermes-conversation-probe-does-not-exist"
+
 SSE_DATA_PREFIX = "data: "
 SSE_DONE = "[DONE]"
 
@@ -71,6 +76,25 @@ class HermesClient:
         if not isinstance(data, list):
             raise HermesConnectionError("Malformed model list")
         return [item["id"] for item in data if isinstance(item, dict) and "id" in item]
+
+    async def async_profile_prefix_honoured(self) -> bool | None:
+        """Return whether Hermes routes on the /p/<profile>/ prefix.
+
+        None when the probe is inconclusive — an unreachable gateway or a
+        rejected key says nothing about multiplexing, and warning on those
+        would be noise.
+        """
+        url = f"{self._base_url}/p/{PROBE_PROFILE}/v1/models"
+        try:
+            async with asyncio.timeout(VALIDATE_TIMEOUT):
+                async with self._session.get(url, headers=self._headers) as response:
+                    if response.status == HTTPStatus.NOT_FOUND:
+                        return True
+                    if response.status == HTTPStatus.OK:
+                        return False
+                    return None
+        except TimeoutError, aiohttp.ClientError:
+            return None
 
     async def async_stream_chat(
         self,

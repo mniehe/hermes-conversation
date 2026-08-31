@@ -265,13 +265,17 @@ prefix in `_make_profile_prefix_middleware` (2041) against
 `gateway.multiplex_profiles` is already `true` on your box
 (`hermes-vm.nix:191`).
 
-**Not implemented as of v0.1.0.** This design called for the flow to warn when
-`/p/{profile}/v1/models` and `/v1/models` are indistinguishable, since a
-silently-wrong profile is miserable to debug and HACS installers will not have
-multiplexing enabled. It was not built, and the README documents the symptom
-instead. Worth revisiting: probing a deliberately nonexistent profile name is
-probably a better signal than comparing model lists, which can legitimately
-match.
+**Implemented in v0.2.0, by a better probe than this design proposed.** The
+original idea — compare `/p/{profile}/v1/models` against `/v1/models` and warn
+when they match — is unsound, because two profiles can legitimately advertise
+the same models. Instead the integration requests a deliberately nonexistent
+profile. `_resolve_request_profile` (`api_server.py:1974`) returns `None` when
+multiplexing is off (prefix ignored, so the request succeeds) and
+`_PROFILE_REJECTED` → 404 when it is on. A 200 for a profile that cannot exist
+therefore proves the prefix is being ignored. Anything else — 401, a timeout —
+is inconclusive and stays silent. Setup is never blocked: a single-profile
+gateway is a legitimate configuration, so this is a repair warning naming the
+profile, not an error.
 
 ### Conversation subentry — one per agent
 

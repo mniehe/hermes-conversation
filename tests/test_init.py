@@ -15,6 +15,7 @@ from custom_components.hermes_conversation.const import (
     DOMAIN,
 )
 
+from .conftest import PROBE_URL
 from .const import API_KEY, BASE_URL, DEFAULT_MODELS, MODELS_URL, PROFILE
 
 ENTRY_DATA = {CONF_BASE_URL: BASE_URL, CONF_PROFILE: PROFILE, CONF_API_KEY: API_KEY}
@@ -28,7 +29,13 @@ def _entry(hass: HomeAssistant) -> MockConfigEntry:
     return entry
 
 
-async def _setup(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+async def _setup(
+    hass: HomeAssistant,
+    entry: MockConfigEntry,
+    aioclient_mock: AiohttpClientMocker | None = None,
+) -> None:
+    if aioclient_mock is not None:
+        aioclient_mock.get(PROBE_URL, status=HTTPStatus.NOT_FOUND)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
@@ -38,7 +45,7 @@ async def test_setup_stores_client_in_runtime_data(
 ) -> None:
     entry = _entry(hass)
     aioclient_mock.get(MODELS_URL, json=DEFAULT_MODELS)
-    await _setup(hass, entry)
+    await _setup(hass, entry, aioclient_mock)
 
     assert entry.state is ConfigEntryState.LOADED
     assert isinstance(entry.runtime_data, HermesClient)
@@ -72,7 +79,7 @@ async def test_rejected_key_triggers_reauth(
 async def test_unload(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
     entry = _entry(hass)
     aioclient_mock.get(MODELS_URL, json=DEFAULT_MODELS)
-    await _setup(hass, entry)
+    await _setup(hass, entry, aioclient_mock)
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     assert entry.state is ConfigEntryState.NOT_LOADED

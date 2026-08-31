@@ -8,9 +8,16 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import issue_registry as ir
 
 from .client import HermesAuthError, HermesClient, HermesConnectionError
-from .const import CONF_API_KEY, CONF_BASE_URL, CONF_PROFILE
+from .const import (
+    CONF_API_KEY,
+    CONF_BASE_URL,
+    CONF_PROFILE,
+    DOMAIN,
+    ISSUE_PROFILE_IGNORED,
+)
 from .llm import async_check_mcp_server, async_register_api
 
 _LOGGER = logging.getLogger(__name__)
@@ -45,6 +52,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HermesConfigEntry) -> bo
     entry.runtime_data = client
     entry.async_on_unload(async_register_api(hass))
     async_check_mcp_server(hass)
+    await _async_check_profile_routing(hass, client, entry.data[CONF_PROFILE])
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
@@ -52,3 +60,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: HermesConfigEntry) -> bo
 async def async_unload_entry(hass: HomeAssistant, entry: HermesConfigEntry) -> bool:
     """Unload a Hermes Conversation config entry."""
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def _async_check_profile_routing(
+    hass: HomeAssistant, client: HermesClient, profile: str
+) -> None:
+    """Warn when Hermes is ignoring the profile prefix.
+
+    With ``gateway.multiplex_profiles`` off, Hermes drops the ``/p/<profile>/``
+    prefix and serves the default profile instead. Nothing fails, so without
+    this the only symptom is an agent answering as the wrong persona.
+    """
+    if await client.async_profile_prefix_honoured() is not False:
+        ir.async_delete_issue(hass, DOMAIN, ISSUE_PROFILE_IGNORED)
+        return
+
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        ISSUE_PROFILE_IGNORED,
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key=ISSUE_PROFILE_IGNORED,
+        translation_placeholders={"profile": profile},
+    )

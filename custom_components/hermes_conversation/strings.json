@@ -98,6 +98,10 @@
     "mcp_server_unrestricted": {
       "title": "Hermes can control locks and doors",
       "description": "The Model Context Protocol Server is not serving \"{api_name}\", so anything connected to it \u2014 including Hermes \u2014 gets the unrestricted Assist tools and can lock, unlock, open and close your doors.\n\nTo restrict it, open the Model Context Protocol Server integration, reconfigure it, and select \"{api_name}\".\n\nIgnore this if you intend that client to have full control."
+    },
+    "profile_ignored": {
+      "title": "Hermes is ignoring the profile name",
+      "description": "Hermes is not routing on the profile prefix, so requests meant for \"{profile}\" are being served by the gateway's default profile instead. Nothing fails \u2014 the agent simply answers as the wrong persona.\n\nSet `gateway.multiplex_profiles: true` in the Hermes gateway config and restart it. If you run a single-profile gateway on purpose, this warning is expected and can be ignored."
     }
   }
 }

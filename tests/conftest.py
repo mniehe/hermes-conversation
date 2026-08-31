@@ -1,6 +1,7 @@
 """Shared fixtures for the Hermes Conversation test suite."""
 
 from collections.abc import Callable, Coroutine
+from http import HTTPStatus
 from typing import Any
 
 import pytest
@@ -10,6 +11,7 @@ from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
+from custom_components.hermes_conversation.client import PROBE_PROFILE
 from custom_components.hermes_conversation.const import (
     CONF_API_KEY,
     CONF_BASE_URL,
@@ -19,6 +21,8 @@ from custom_components.hermes_conversation.const import (
 )
 
 from .const import API_KEY, BASE_URL, DEFAULT_MODELS, MODELS_URL, PROFILE
+
+PROBE_URL = f"{BASE_URL}/p/{PROBE_PROFILE}/v1/models"
 
 ENTRY_DATA = {CONF_BASE_URL: BASE_URL, CONF_PROFILE: PROFILE, CONF_API_KEY: API_KEY}
 
@@ -61,6 +65,10 @@ def load_entry(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> Entr
         )
         entry.add_to_hass(hass)
         aioclient_mock.get(MODELS_URL, json=DEFAULT_MODELS)
+        # Hermes rejects an unknown profile when multiplexing is on; tests that
+        # care about the alternative register their own mock first.
+        if not any(str(call[1]) == PROBE_URL for call in aioclient_mock.mock_calls):
+            aioclient_mock.get(PROBE_URL, status=HTTPStatus.NOT_FOUND)
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
         return entry

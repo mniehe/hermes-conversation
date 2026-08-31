@@ -1185,7 +1185,7 @@ dev = [
 [package.metadata.requires-dev]
 dev = [
     { name = "hassil", specifier = "==3.12.0" },
-    { name = "home-assistant-intents", specifier = "==2026.7.30" },
+    { name = "home-assistant-intents", specifier = "==2026.8.25" },
     { name = "mypy", specifier = ">=1.14" },
     { name = "pytest-homeassistant-custom-component", specifier = "==0.13.356" },
     { name = "ruff", specifier = ">=0.14" },
@@ -1205,11 +1205,11 @@ wheels = [
 
 [[package]]
 name = "home-assistant-intents"
-version = "2026.7.30"
+version = "2026.8.25"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/50/33/9595939981ed1df84d35687c0aa126bc1dcb3685582fc77da004cabf4a0c/home_assistant_intents-2026.7.30.tar.gz", hash = "sha256:e03d9d7fbf84139db7ba3c940091b02600c32db41ec89d8a023729e95b3b0f23", size = 537462, upload-time = "2026-07-30T15:15:08.482Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/04/38/92052085fa267b8e83f6feb398f3433ff57ccf2dbade06cdd4c512d5af35/home_assistant_intents-2026.8.25.tar.gz", hash = "sha256:10b97c0df6e7a5500ebb3ffad0a6bce6d0ab31216df66b0d4df6a540c825e19a", size = 658600, upload-time = "2026-08-25T17:15:23.466Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/78/48/ef3e92a7c47ce4a7d3272b10786b58821104d3d9574e9dce62c7dbf3208b/home_assistant_intents-2026.7.30-py3-none-any.whl", hash = "sha256:9e9f6cb787b47db87de7266656932d270135b7be2ef4c491e02086c874ed08a0", size = 561387, upload-time = "2026-07-30T15:15:06.674Z" },
+    { url = "https://files.pythonhosted.org/packages/fa/e5/f92615deeb3ec6ebdfa34bdc49a6822a6181db67ecc5af871399307a27f8/home_assistant_intents-2026.8.25-py3-none-any.whl", hash = "sha256:87fe828b87f57461edeedd43af702a467f4ed3e0c57b33da3afcd6891d1d3562", size = 680102, upload-time = "2026-08-25T17:15:21.68Z" },
 ]
 
 [[package]]

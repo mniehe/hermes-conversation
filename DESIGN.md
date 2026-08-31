@@ -133,10 +133,16 @@ registered. No policy evaluation to get wrong. This is the cheapest and most
 robust layer, and it is worth using deliberately rather than by accident.
 
 **Layer 1 — hard never-list. Compiled in, no config key reaches it.**
-`lock.open`, `lock.unlock`, `alarm_control_panel.alarm_disarm`,
-`cover.open_cover` on entities in the `garage` device class, and every
+Every service call on the `lock` domain, every `cover` entity whose device class
+is `door` or `garage`, `alarm_control_panel.alarm_disarm`, and every
 `homeassistant.*` meta-service. If you later want one of these, it is a code
-change and a release — which is the correct amount of friction for the door lock.
+change and a release — the right amount of friction for a front door.
+
+**This is a denial on *writes*, not a blackout on the entities.** Your wording was
+"no write access to locks or doors", and that distinction is worth keeping: the
+agent can still answer "is the front door locked?" — genuinely useful, and
+harmless — it just cannot act on the answer. `ha_get_state` and `ha_list_entities`
+see locks and doors normally; `ha_call_service` refuses them unconditionally.
 
 **Layer 2 — plugin ceiling.** `plugin.yaml` `config_schema` carries
 `allowed_domains` and `denied_entities`. This lives on the Hermes host, edited
@@ -378,15 +384,17 @@ systemd-tmpfiles symlink, confirmed at `modules/nixos/hermes-vm.nix:787`:
 ```
 
 So: no absolute paths, no writes inside the plugin directory, all state in memory
-or under Hermes' own state dir. Since the plugin lives in *this* repo rather than
-in dotfiles, the dotfiles side gets a fetched source (flake input or pinned
-tarball) whose store path is the symlink target.
+or under Hermes' own state dir. Distribution is decided (§ Decisions): the plugin is cloned onto the
+VM rather than materialised from the Nix store, so the tmpfiles line above is the
+pattern it imitates, not the mechanism it uses.
 
-**Two dotfiles changes this will need** — flagged now, not made:
+**Two Hermes-side changes this will need** — flagged now, not made:
 `home-assist` currently has only `secretEnvFile` and no `settings` block
 (`hosts/cougar/hermes-vm.nix:346-348`), so it needs
-`settings.plugins.enabled = ["home-assistant"]`, plus a tmpfiles line for the new
-plugin and `HA_TOKEN` added to `hermes-home-assist.env`.
+`settings.plugins.enabled = ["home-assistant"]` — that one is still a dotfiles
+edit, since profile settings live there — plus `HA_TOKEN` in
+`hermes-home-assist.env`. The plugin *files* now arrive by clone rather than by
+a tmpfiles symlink from the Nix store.
 
 ### Tools
 
@@ -406,10 +414,24 @@ your existing convention (`hermes_cli/config.py:4451`). Declared as
 `requires_env: [HA_TOKEN]` so Hermes reports a clear error when it is missing
 rather than failing at first tool call.
 
-The token is created against a **dedicated HA user**, not your admin account, so
-the HA logbook attributes agent actions to `Hermes` and revocation doesn't log
-you out. The plugin sends `Authorization: Bearer {HA_TOKEN}` to
-`{ha_base_url}/api/…` and never logs the token.
+**Decided: a dedicated, non-admin HA user.** The token is created against it
+rather than your admin account, which buys three things you asked for:
+
+- *Audit* — the logbook and history attribute every action to `Hermes`, so you
+  can see what the agent did versus what you or your wife did.
+- *Capability* — a non-admin user is refused HA's admin-only surfaces (config
+  changes, user management, add-on control) by HA itself, before any of this
+  integration's own policy runs.
+- *Access* — revoking the token or disabling the user cuts the agent off
+  instantly without touching your own session.
+
+Worth being straight about the limit: HA's per-user permission model is coarse
+and cannot express "everything except unlocking". The non-admin user is
+defence-in-depth and the audit trail — it is *not* the lock boundary. The
+never-list is.
+
+The plugin sends `Authorization: Bearer {HA_TOKEN}` to `{ha_base_url}/api/…` and
+never logs the token.
 
 The same token authenticates the policy fetch, so there is no second credential.
 
@@ -554,18 +576,32 @@ the Python packages.
 
 ---
 
-## Open questions for you
+## Decisions (settled in review)
 
-1. ~~**Hermes `multiplex_profiles`**~~ — **answered:** already `true`
-   (`hosts/cougar/hermes-vm.nix:191`). Still documented in the README for other
-   installers.
-2. **Dedicated HA user for the agent** — do you want me to document creating one,
-   or will you reuse an existing token? Either way `HA_TOKEN` needs adding to
-   `hermes-home-assist.env`, which only you can do.
-3. **Never-list scope** — I have `lock.open`/`lock.unlock`,
-   `alarm_control_panel.alarm_disarm`, garage covers, and `homeassistant.*`.
-   Anything else that should be un-configurable? Frigate, or anything on the
-   Vultr box?
-4. **HA target version** — I designed against 2026.8.3 (current latest). Confirm
-   that matches your deployment; the subentry API is the part most sensitive to
-   a mismatch.
+1. **`multiplex_profiles`** — already `true` (`hosts/cougar/hermes-vm.nix:191`).
+   Still documented in the README, since a HACS installer will not have it on.
+2. **Distribution** — the HA integration ships as a **HACS custom repository**,
+   managed outside dotfiles. No flake input, no dotfiles coupling.
+3. **HA credentials** — dedicated non-admin HA user with a long-lived token (§5).
+4. **Never-list** — no writes to locks, doors/garage covers, alarm disarm, or
+   `homeassistant.*`. Reads unaffected.
+5. **Architecture** — confirmed B. Hermes gets tool access to HA over the API;
+   **no HA-side tool plumbing is built**, not even speculatively. Dead code that
+   looks like a security boundary is worse than no code.
+
+### One thing distribution does not cover
+
+HACS installs Home Assistant integrations. It has no idea what a Hermes plugin
+is, so `hermes_plugin/` does not reach the Hermes VM by installing from HACS —
+the two halves of this repo have different delivery paths:
+
+```
+this repo ──▶ HACS custom repo ──▶ HA config/custom_components/   (automatic)
+          └─▶ ??? ──────────────▶ /data/hermes/.hermes/plugins/   (manual)
+```
+
+Since dotfiles is out, the simplest thing that works is cloning the repo on the
+Hermes VM and symlinking `hermes_plugin/` into the plugins directory, with a
+`git pull` to update. I will document that in the README and keep the plugin
+free of build steps so a clone is genuinely sufficient. Say the word if you would
+rather have a release tarball or something else.

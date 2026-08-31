@@ -50,5 +50,48 @@
     "invalid_auth": {
       "message": "Hermes rejected the API key. Reconfigure the integration to enter a new one."
     }
+  },
+  "config_subentries": {
+    "conversation": {
+      "title": "Conversation agent",
+      "initiate_flow": {
+        "user": "Add a conversation agent",
+        "reconfigure": "Edit this conversation agent"
+      },
+      "entry_type": "Conversation agent",
+      "step": {
+        "user": {
+          "title": "Add a conversation agent",
+          "data": {
+            "name": "Name",
+            "model": "Model",
+            "prompt": "System prompt",
+            "timeout": "Timeout (seconds)"
+          },
+          "data_description": {
+            "model": "Which model this agent asks the profile to use. 'hermes-agent' means the profile's own default.",
+            "prompt": "Prepended to every conversation. Templates are supported.",
+            "timeout": "How long to wait for a reply before giving up."
+          }
+        },
+        "reconfigure": {
+          "title": "Edit conversation agent",
+          "data": {
+            "model": "Model",
+            "prompt": "System prompt",
+            "timeout": "Timeout (seconds)"
+          },
+          "data_description": {
+            "model": "Which model this agent asks the profile to use. 'hermes-agent' means the profile's own default.",
+            "prompt": "Prepended to every conversation. Templates are supported.",
+            "timeout": "How long to wait for a reply before giving up."
+          }
+        }
+      },
+      "abort": {
+        "entry_not_loaded": "Connect to Hermes before adding an agent.",
+        "reconfigure_successful": "Conversation agent updated."
+      }
+    }
   }
 }

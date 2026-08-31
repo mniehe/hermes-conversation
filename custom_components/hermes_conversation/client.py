@@ -64,13 +64,18 @@ class HermesClient:
             raise HermesConnectionError("Malformed model list")
         return [item["id"] for item in data if isinstance(item, dict) and "id" in item]
 
-    async def async_chat(self, model: str, messages: list[dict[str, str]]) -> str:
+    async def async_chat(
+        self,
+        model: str,
+        messages: list[dict[str, str]],
+        timeout: int = REQUEST_TIMEOUT,
+    ) -> str:
         """Send a chat completion and return the assistant's reply."""
         payload = await self._request(
             "POST",
             "chat/completions",
             json={"model": model, "messages": messages, "stream": False},
-            timeout=REQUEST_TIMEOUT,
+            timeout=timeout,
         )
         try:
             answer = payload["choices"][0]["message"]["content"]

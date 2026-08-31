@@ -19,4 +19,12 @@ VALIDATE_TIMEOUT: Final = 10
 MANUFACTURER: Final = "Nous Research"
 MODEL_NAME: Final = "Hermes Agent"
 
+# /v1/models advertises a stable virtual model that means "the profile's own
+# default"; anything else overrides the model for that turn.
 DEFAULT_MODEL: Final = "hermes-agent"
+
+SUBENTRY_TYPE_CONVERSATION: Final = "conversation"
+DEFAULT_CONVERSATION_NAME: Final = "Hermes"
+
+MIN_TIMEOUT: Final = 10
+MAX_TIMEOUT: Final = 300

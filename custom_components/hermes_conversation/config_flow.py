@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+from http import HTTPStatus
 from typing import Any
 
 import aiohttp
 import voluptuous as vol
-
 from homeassistant import config_entries
+from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import CONF_API_KEY, CONF_BASE_URL, DEFAULT_BASE_URL, DOMAIN
@@ -19,7 +20,9 @@ class HermesConversationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
-    async def async_step_user(self, user_input: dict[str, Any] | None = None):
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Handle the initial setup step."""
         errors: dict[str, str] = {}
 
@@ -33,11 +36,11 @@ class HermesConversationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     async with async_get_clientsession(self.hass).get(
                         f"{base_url}/models", headers=headers
                     ) as response:
-                        if response.status == 401:
+                        if response.status == HTTPStatus.UNAUTHORIZED:
                             errors["base"] = "invalid_auth"
                         else:
                             response.raise_for_status()
-            except (TimeoutError, aiohttp.ClientError):
+            except TimeoutError, aiohttp.ClientError:
                 errors["base"] = "cannot_connect"
 
             if not errors:

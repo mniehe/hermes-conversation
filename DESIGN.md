@@ -29,8 +29,8 @@ version informs what the surviving one must not do.
 complete set of request-body fields it reads:
 
 ```python
-messages   = body.get("messages")
-stream     = _coerce_request_bool(body.get("stream"), default=False)
+messages = body.get("messages")
+stream = _coerce_request_bool(body.get("stream"), default=False)
 model_name = body.get("model", self._model_name)
 ```
 
@@ -335,8 +335,9 @@ component was not among them. The brief's description was accurate:
 ```python
 class LLMToolsPlatformProtocol(Protocol):
     @callback
-    def async_get_tools(self, hass, llm_context: LLMContext, api_id: str
-                        ) -> LLMTools | None: ...
+    def async_get_tools(
+        self, hass, llm_context: LLMContext, api_id: str
+    ) -> LLMTools | None: ...
 ```
 
 The one qualification that matters: platforms serve `LLM_API_ASSIST` only, so

@@ -4,7 +4,14 @@ import json
 from pathlib import Path
 
 INTEGRATION_DIR = Path("custom_components/hermes_conversation")
-HACS_REQUIRED_KEYS = ("domain", "documentation", "issue_tracker", "codeowners", "name", "version")
+HACS_REQUIRED_KEYS = (
+    "domain",
+    "documentation",
+    "issue_tracker",
+    "codeowners",
+    "name",
+    "version",
+)
 
 
 def _manifest() -> dict:

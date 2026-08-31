@@ -7,7 +7,6 @@ import logging
 from typing import Any, Literal
 
 import aiohttp
-
 from homeassistant.components import conversation
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import MATCH_ALL
@@ -96,8 +95,16 @@ class HermesConversationEntity(
             answer = data["choices"][0]["message"]["content"].strip()
             if not answer:
                 raise ValueError("Hermes returned an empty response")
-        except (TimeoutError, aiohttp.ClientError, KeyError, TypeError, ValueError) as err:
-            _LOGGER.warning("Hermes conversation request failed: %s", type(err).__name__)
+        except (
+            TimeoutError,
+            aiohttp.ClientError,
+            KeyError,
+            TypeError,
+            ValueError,
+        ) as err:
+            _LOGGER.warning(
+                "Hermes conversation request failed: %s", type(err).__name__
+            )
             answer = "Sorry, Hermes is unavailable right now."
 
         chat_log.async_add_assistant_content_without_tools(

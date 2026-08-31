@@ -2,8 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "Connect to Hermes",
-        "description": "Enter the Hermes gateway address and the profile you want to talk to. Use the gateway root, not the /p/<profile>/v1 path.",
+        "description": "Enter the Hermes gateway address and the profile you want to talk to. Use the gateway root URL, not the full profile API path.",
         "data": {
           "base_url": "Gateway URL",
           "profile": "Profile",
@@ -16,7 +15,6 @@
         }
       },
       "reconfigure": {
-        "title": "Change Hermes connection",
         "description": "Update the gateway, profile or API key for this agent.",
         "data": {
           "base_url": "Gateway URL",
@@ -25,7 +23,6 @@
         }
       },
       "reauth_confirm": {
-        "title": "Re-enter the Hermes API key",
         "description": "Hermes rejected the stored key for the {profile} profile.",
         "data": {
           "api_key": "API key"

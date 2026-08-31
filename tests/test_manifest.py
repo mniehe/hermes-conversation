@@ -1,6 +1,7 @@
 """The manifest is load-bearing for both Home Assistant and HACS."""
 
 import json
+import re
 from pathlib import Path
 
 INTEGRATION_DIR = Path("custom_components/hermes_conversation")
@@ -46,3 +47,21 @@ def test_translations_match_strings():
     strings = json.loads((INTEGRATION_DIR / "strings.json").read_text())
     english = json.loads((INTEGRATION_DIR / "translations" / "en.json").read_text())
     assert strings == english
+
+
+def _walk(node, path=""):
+    """Yield every (path, string) leaf in a translations tree."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            yield from _walk(value, f"{path}.{key}" if path else key)
+    elif isinstance(node, str):
+        yield path, node
+
+
+def test_translations_contain_no_markup():
+    """hassfest rejects strings that look like HTML, e.g. a bare <profile>."""
+    strings = json.loads((INTEGRATION_DIR / "strings.json").read_text())
+    offenders = [
+        path for path, text in _walk(strings) if re.search(r"<[^>\s][^>]*>", text)
+    ]
+    assert not offenders

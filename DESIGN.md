@@ -263,9 +263,15 @@ No profile-listing endpoint exists, hence free text: `api_server.py` matches the
 prefix in `_make_profile_prefix_middleware` (2041) against
 `multiplex_profile_allowlist` (2002) but never exposes the list.
 `gateway.multiplex_profiles` is already `true` on your box
-(`hermes-vm.nix:191`); the flow still warns when `/p/{profile}/v1/models` and
-`/v1/models` are indistinguishable, because a silently-wrong profile is miserable
-to debug and HACS installers will not have it enabled.
+(`hermes-vm.nix:191`).
+
+**Not implemented as of v0.1.0.** This design called for the flow to warn when
+`/p/{profile}/v1/models` and `/v1/models` are indistinguishable, since a
+silently-wrong profile is miserable to debug and HACS installers will not have
+multiplexing enabled. It was not built, and the README documents the symptom
+instead. Worth revisiting: probing a deliberately nonexistent profile name is
+probably a better signal than comparing model lists, which can legitimately
+match.
 
 ### Conversation subentry — one per agent
 

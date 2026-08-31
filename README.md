@@ -93,9 +93,9 @@ can only see and act on exposed entities.
 
 ## What the agent cannot do
 
-Writes to **locks**, **door and garage covers**, and **alarm disarm** are refused.
-This is not configurable — changing it is a code change and a release, which is
-the right amount of friction for a front door.
+Writes to **locks**, **door and garage covers**, and **alarm panels** are
+refused. This is not configurable — changing it is a code change and a release,
+which is the right amount of friction for a front door.
 
 Home Assistant uses one tool for opposite intentions: its own prompt says *"Use
 HassTurnOn to lock and HassTurnOff to unlock a lock"*. Unlocking a door is
@@ -112,9 +112,10 @@ Reading is unaffected. "Is the front door locked?" still answers.
 - Home Assistant **2026.8.2** or later
 - A reachable Hermes gateway with `gateway.api_server.enabled: true`
 - For named profiles: `gateway.multiplex_profiles: true`, so `/p/<profile>/`
-  resolves. **With it off the prefix is silently ignored and every request lands
-  on the default profile**, so the config flow warns when it cannot tell the two
-  apart.
+  resolves. **With it off, Hermes silently ignores the prefix and every request
+  lands on the default profile** — setup will still succeed, and you will be
+  talking to the wrong profile with nothing to indicate it. Check this first if
+  an agent answers as the wrong persona.
 
 ## Roadmap
 

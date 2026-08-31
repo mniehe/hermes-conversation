@@ -9,6 +9,11 @@ Verified against:
 | Home Assistant core | **2026.8.2** (your deployment, `hosts/cougar/services/home-assistant.nix:40`) | PyPI wheel + `raw.githubusercontent.com` at tag `2026.8.2` |
 | Hermes agent | **0.20.5** (matches pinned commit `fcbd107`) | `/nix/store/…-hermes-agent-env/lib/python3.12/site-packages` |
 
+Cross-checked against the published docs: `home-assistant.io/integrations/mcp_server`
+and `developers.home-assistant.io/docs/core/llm/`. Where the docs and the source
+agree they are cited together; where only the docs state something (auth
+behaviour, admin gating) they are cited as the authority.
+
 Every claim cites the file it came from. This document is the **second** design;
 the first proposed a Hermes-side plugin, which turned out to be unnecessary. The
 reasoning for the change is in §2 rather than hidden, because the discarded
@@ -43,7 +48,8 @@ a call, HA executes it — has no server-side code path.** Not harder. Absent.
 - Home Assistant 2026.8.2 ships **`mcp_server`**, which serves a selected HA "LLM
   API" as MCP tools over `/api/mcp`, authenticated with an ordinary HA bearer
   token. Its `http.py` docstring: *"This serves the configured LLM APIs and does
-  not require admin access."*
+  not require admin access."* The docs agree: *"The `/api/mcp` endpoint serves the
+  LLM API you select when you set up the integration."*
 - Hermes already consumes MCP servers with arbitrary auth headers — you run two
   (`hosts/cougar/hermes-vm.nix:230,240`).
 
@@ -52,10 +58,29 @@ configuration, not a plugin:
 
 ```nix
 mcp_servers.home_assistant = {
-  url = "http://<ha-host>:8123/api/mcp";
+  url = "http://<ha-host>:8123/api/mcp";          # bare — see the footgun below
   headers."Authorization" = "Bearer ${HA_TOKEN}";
 };
 ```
+
+**Footgun, worth getting right the first time.** There are two URL shapes and they
+have different auth rules. The docs are explicit: *"Connecting to any API other
+than Assist requires the authenticated user to be an administrator."* That gate
+applies to the id-addressed form:
+
+| URL | Serves | Admin required? |
+|---|---|---|
+| `/api/mcp` | whatever API you picked in the config flow | **no** |
+| `/api/mcp/assist` | Assist | no |
+| `/api/mcp/hermes_restricted` | our API, addressed by id | **yes** |
+
+So point Hermes at the **bare `/api/mcp`** and select the restricted API in the
+`mcp_server` config flow. Addressing our API by id would force the token onto an
+admin account and undo the whole point of the dedicated non-admin user.
+
+Auth: the docs prefer OAuth (IndieAuth) and treat long-lived tokens as the
+fallback for *"MCP clients [that] may not support OAuth"*. Hermes sends a static
+header, so the long-lived token is the correct choice here, not a compromise.
 
 ---
 
@@ -133,8 +158,20 @@ Two layers, in this order, because the first is the one that actually holds.
 **Layer 1 — exposure. The real boundary.**
 Lock and door/garage-cover entities are not exposed to the assistant. Intent
 resolution cannot see them, so no phrasing reaches them. This is HA's built-in
-mechanism, it is enforced in core rather than in my code, and it is configured in
-a UI you already have (Settings → Voice assistants → Expose).
+mechanism, enforced in core rather than in my code, and the docs state it plainly:
+*"Clients can only control or provide information about entities that are exposed
+to it."*
+
+**Which exposure list?** `mcp_server` builds its context with
+`assistant=conversation.DOMAIN` (`mcp_server/http.py:148`), so the list that
+governs Hermes is the ordinary Settings → Voice assistants → Expose list — the
+same one HA's own Assist uses.
+
+**That sharing is a real tradeoff, not a detail.** Unexposing your locks to keep
+them away from Hermes also takes them away from HA's built-in voice assistant, so
+"Hey Assist, lock the front door" stops working too. If you want to keep that,
+leave the locks exposed and rely on layer 2 — which is precisely why layer 2 is
+not optional decoration.
 
 The integration does not silently depend on this. On setup and on a repair check
 it inspects exposure and raises an HA **repair issue** if a `lock` entity or a
@@ -168,8 +205,13 @@ problem that defeats name filtering.
 
 **Reads are unaffected.** Per your wording, this denies writes only. Asking "is
 the front door locked?" still works via `GetLiveContext`, which is genuinely
-useful and harmless. That does mean lock entities stay *exposed for reading*,
-which is exactly why layer 2 exists and why layer 1 alone was not enough.
+useful and harmless.
+
+Note the two layers pull in opposite directions on exposure, and you get to pick:
+unexpose locks and layer 1 does the work but reads and HA's own Assist lose them
+too; leave them exposed and layer 2 does the work while reads keep working. The
+integration supports both and the repair check (below) only fires in the second
+case, as a reminder that layer 2 is now load-bearing.
 
 ### What the token buys
 
@@ -400,12 +442,13 @@ toolchain, uv supplies the packages.
 ## 10. One thing I could not settle
 
 `mcp_server` declares `single_config_entry: true`, so HA serves **one** MCP
-endpoint. `/api/mcp` serves the APIs selected in its config flow with a non-admin
-token; the per-API `/api/mcp/<API ID>` endpoints require admin *except* for
-Assist (`mcp_server/http.py` docstring).
+endpoint, and the admin gate above means the practical configuration is: one
+restricted API, selected in the config flow, reached at the bare `/api/mcp` with
+a non-admin token. That works.
 
-That is fine for one restricted API on a non-admin token. It becomes a problem
-only if you later want Telegram-Hermes and voice-Hermes to hold *different*
-permissions — that needs two APIs on two endpoints, and the admin requirement
-cuts against the non-admin user. I have not tested that combination and will not
-claim it works. Not a v1 blocker; worth knowing before it becomes a surprise.
+It becomes a problem only if you later want Telegram-Hermes and voice-Hermes to
+hold *different* permissions. That needs two APIs addressed by id, and the docs
+are clear that anything other than Assist addressed that way demands an admin
+token — which cancels the dedicated non-admin user. I have not tested that
+combination and will not claim it works. Not a v1 blocker, but worth knowing
+before it becomes a surprise.

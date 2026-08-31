@@ -9,6 +9,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 
 from .client import HermesAuthError, HermesClient, HermesConnectionError
 from .const import CONF_API_KEY, CONF_BASE_URL, CONF_PROFILE
+from .llm import async_check_mcp_server, async_register_api
 
 PLATFORMS = (Platform.CONVERSATION,)
 
@@ -32,6 +33,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: HermesConfigEntry) -> bo
         raise ConfigEntryNotReady(str(err)) from err
 
     entry.runtime_data = client
+    entry.async_on_unload(async_register_api(hass))
+    async_check_mcp_server(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 

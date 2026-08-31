@@ -93,5 +93,11 @@
         "reconfigure_successful": "Conversation agent updated."
       }
     }
+  },
+  "issues": {
+    "mcp_server_unrestricted": {
+      "title": "Hermes can control locks and doors",
+      "description": "The Model Context Protocol Server is not serving \"{api_name}\", so anything connected to it \u2014 including Hermes \u2014 gets the unrestricted Assist tools and can lock, unlock, open and close your doors.\n\nTo restrict it, open the Model Context Protocol Server integration, reconfigure it, and select \"{api_name}\".\n\nIgnore this if you intend that client to have full control."
+    }
   }
 }

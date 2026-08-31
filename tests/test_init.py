@@ -51,6 +51,28 @@ async def test_setup_stores_client_in_runtime_data(
     assert isinstance(entry.runtime_data, HermesClient)
 
 
+async def test_multiple_profile_entries_load(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """The integration-wide LLM API must not belong to one profile entry."""
+    first = _entry(hass)
+    second_profile = "wife"
+    second = MockConfigEntry(
+        domain=DOMAIN,
+        data={**ENTRY_DATA, CONF_PROFILE: second_profile},
+        unique_id=f"{BASE_URL}#{second_profile}",
+    )
+    second.add_to_hass(hass)
+    aioclient_mock.get(MODELS_URL, json=DEFAULT_MODELS)
+    aioclient_mock.get(f"{BASE_URL}/p/{second_profile}/v1/models", json=DEFAULT_MODELS)
+
+    # Loading the integration sets up all of its pending entries.
+    await _setup(hass, first, aioclient_mock)
+
+    assert first.state is ConfigEntryState.LOADED
+    assert second.state is ConfigEntryState.LOADED
+
+
 async def test_unreachable_gateway_retries(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
 ) -> None:

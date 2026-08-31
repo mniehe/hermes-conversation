@@ -4,11 +4,17 @@ from __future__ import annotations
 
 import logging
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import (
+    SIGNAL_CONFIG_ENTRY_CHANGED,
+    ConfigEntry,
+    ConfigEntryChange,
+)
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.typing import ConfigType
 
 from .client import HermesAuthError, HermesClient, HermesConnectionError
 from .const import (
@@ -18,13 +24,32 @@ from .const import (
     DOMAIN,
     ISSUE_PROFILE_IGNORED,
 )
-from .llm import async_check_mcp_server, async_register_api
+from .llm import MCP_SERVER_DOMAIN, async_check_mcp_server, async_register_api
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = (Platform.CONVERSATION,)
 
 type HermesConfigEntry = ConfigEntry[HermesClient]
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Set up integration-wide resources."""
+    async_register_api(hass)
+    # Versions before per-entry routing issues used one global issue id.
+    ir.async_delete_issue(hass, DOMAIN, ISSUE_PROFILE_IGNORED)
+
+    @callback
+    def _config_entry_changed(change: ConfigEntryChange, entry: ConfigEntry) -> None:
+        if entry.domain == MCP_SERVER_DOMAIN:
+            async_check_mcp_server(hass)
+        elif entry.domain == DOMAIN and change is ConfigEntryChange.REMOVED:
+            ir.async_delete_issue(
+                hass, DOMAIN, f"{ISSUE_PROFILE_IGNORED}_{entry.entry_id}"
+            )
+
+    async_dispatcher_connect(hass, SIGNAL_CONFIG_ENTRY_CHANGED, _config_entry_changed)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: HermesConfigEntry) -> bool:
@@ -50,9 +75,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: HermesConfigEntry) -> bo
     )
 
     entry.runtime_data = client
-    entry.async_on_unload(async_register_api(hass))
     async_check_mcp_server(hass)
-    await _async_check_profile_routing(hass, client, entry.data[CONF_PROFILE])
+    await _async_check_profile_routing(hass, client, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
@@ -63,7 +87,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: HermesConfigEntry) -> b
 
 
 async def _async_check_profile_routing(
-    hass: HomeAssistant, client: HermesClient, profile: str
+    hass: HomeAssistant, client: HermesClient, entry: HermesConfigEntry
 ) -> None:
     """Warn when Hermes is ignoring the profile prefix.
 
@@ -71,16 +95,17 @@ async def _async_check_profile_routing(
     prefix and serves the default profile instead. Nothing fails, so without
     this the only symptom is an agent answering as the wrong persona.
     """
+    issue_id = f"{ISSUE_PROFILE_IGNORED}_{entry.entry_id}"
     if await client.async_profile_prefix_honoured() is not False:
-        ir.async_delete_issue(hass, DOMAIN, ISSUE_PROFILE_IGNORED)
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
         return
 
     ir.async_create_issue(
         hass,
         DOMAIN,
-        ISSUE_PROFILE_IGNORED,
+        issue_id,
         is_fixable=False,
         severity=ir.IssueSeverity.WARNING,
         translation_key=ISSUE_PROFILE_IGNORED,
-        translation_placeholders={"profile": profile},
+        translation_placeholders={"profile": entry.data[CONF_PROFILE]},
     )

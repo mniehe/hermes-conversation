@@ -13,7 +13,10 @@ from homeassistant.helpers import intent, llm
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import async_mock_service
 
-from custom_components.hermes_conversation.llm import RESTRICTED_API_ID
+from custom_components.hermes_conversation.llm import (
+    RESTRICTED_API_ID,
+    _targets_forbidden,
+)
 
 ASSISTANT = "conversation"
 
@@ -91,12 +94,13 @@ async def test_api_is_registered(hass: HomeAssistant, load_entry) -> None:
     assert RESTRICTED_API_ID in {api.id for api in llm.async_get_apis(hass)}
 
 
-async def test_api_is_unregistered_on_unload(hass: HomeAssistant, load_entry) -> None:
+async def test_api_survives_profile_unload(hass: HomeAssistant, load_entry) -> None:
+    """The integration-wide API must not belong to one profile entry."""
     entry = await load_entry()
     await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
 
-    assert RESTRICTED_API_ID not in {api.id for api in llm.async_get_apis(hass)}
+    assert RESTRICTED_API_ID in {api.id for api in llm.async_get_apis(hass)}
 
 
 async def test_offers_the_same_tools_as_assist(hass: HomeAssistant, house) -> None:
@@ -151,8 +155,24 @@ async def test_light_is_allowed(hass: HomeAssistant, house, calls) -> None:
     assert len(calls["light.turn_off"]) == 1
 
 
+async def test_light_domain_is_allowed(hass: HomeAssistant, house, calls) -> None:
+    """An explicit safe domain cannot resolve to an unrelated lock."""
+    result = await _call(hass, "HassTurnOff", domain=["light"])
+
+    assert not _refused(result)
+    assert len(calls["light.turn_off"]) == 1
+
+
 async def test_ordinary_cover_is_allowed(hass: HomeAssistant, house, calls) -> None:
     result = await _call(hass, "HassTurnOff", name="living room blind")
+
+    assert not _refused(result)
+    assert len(calls["cover.close_cover"]) == 1
+
+
+async def test_safe_cover_class_is_allowed(hass: HomeAssistant, house, calls) -> None:
+    """A blind constraint cannot resolve to a door or garage cover."""
+    result = await _call(hass, "HassTurnOff", device_class=["blind"])
 
     assert not _refused(result)
     assert len(calls["cover.close_cover"]) == 1
@@ -161,6 +181,13 @@ async def test_ordinary_cover_is_allowed(hass: HomeAssistant, house, calls) -> N
 async def test_reading_lock_state_still_works(hass: HomeAssistant, house) -> None:
     """Denial is on writes only; asking whether the door is locked is fine."""
     result = await _call(hass, "GetLiveContext")
+
+    assert not _refused(result)
+    assert "front door" in str(result)
+
+
+async def test_read_only_tool_is_not_target_guarded(hass: HomeAssistant, house) -> None:
+    result = await _call(hass, "GetLiveContext", name="front door")
 
     assert not _refused(result)
     assert "front door" in str(result)
@@ -237,6 +264,25 @@ async def test_guard_failure_refuses(hass: HomeAssistant, house, calls) -> None:
 
     assert _refused(result)
     assert not calls["light.turn_off"]
+
+
+async def test_unknown_target_slot_fails_closed(hass: HomeAssistant, house) -> None:
+    """A future write intent must not bypass the guard with a new target slot."""
+    assert _targets_forbidden(hass, {"entity_id": "lock.front_door"}, ASSISTANT)
+    assert _targets_forbidden(
+        hass,
+        {"domain": ["light"], "entity_id": "lock.front_door"},
+        ASSISTANT,
+    )
+
+
+async def test_target_constraint_normalization_fails_safe(
+    hass: HomeAssistant, house
+) -> None:
+    """Legacy strings narrow safely; malformed values do not narrow at all."""
+    assert not _targets_forbidden(hass, {"domain": "light"}, ASSISTANT)
+    assert not _targets_forbidden(hass, {"position": 50}, ASSISTANT)
+    assert _targets_forbidden(hass, {"domain": 42}, ASSISTANT)
 
 
 async def test_refusal_is_logged_at_warning(hass: HomeAssistant, house, caplog) -> None:

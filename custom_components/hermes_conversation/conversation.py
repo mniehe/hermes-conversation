@@ -11,6 +11,7 @@ from homeassistant.config_entries import ConfigSubentry
 from homeassistant.const import CONF_MODEL, CONF_PROMPT, CONF_TIMEOUT, MATCH_ALL
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import template
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
@@ -104,7 +105,35 @@ class HermesConversationEntity(
         """Send the transcript to Hermes and return its response."""
         messages: list[dict[str, str]] = []
         if prompt := self.subentry.data.get(CONF_PROMPT):
-            messages.append({"role": "system", "content": prompt})
+            user_name: str | None = None
+            if user_input.context.user_id and (
+                user := await self.hass.auth.async_get_user(user_input.context.user_id)
+            ):
+                user_name = user.name
+            messages.append(
+                {
+                    "role": "system",
+                    "content": template.Template(prompt, self.hass).async_render(
+                        {
+                            "ha_name": self.hass.config.location_name,
+                            "user_name": user_name,
+                            "llm_context": user_input.as_llm_context(DOMAIN),
+                        },
+                        parse_result=False,
+                    ),
+                }
+            )
+
+        if user_input.extra_system_prompt:
+            if messages:
+                messages[0]["content"] += f"\n{user_input.extra_system_prompt}"
+            else:
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": user_input.extra_system_prompt,
+                    }
+                )
 
         messages += [
             {"role": content.role, "content": content.content}

@@ -5,7 +5,11 @@ A [Home Assistant][ha] conversation agent backed by a [Hermes][hermes] profile.
 Talk to Hermes from Home Assistant — voice pipeline, Assist dialog, or an
 automation — and let Hermes act on your house from any of its channels.
 
-> **Status:** v0.1.0. Streaming chat plus restricted house control over MCP.
+> **Status:** Streaming chat plus restricted house control over MCP.
+
+This integration supplies the conversation stage of an existing Home Assistant
+Assist pipeline. Speech-to-text, text-to-speech, wake-word detection and voice
+satellite hardware are provided by separate Home Assistant integrations.
 
 ## How it works
 

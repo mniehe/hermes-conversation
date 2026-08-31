@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant
 from . import HermesConfigEntry
 from .client import HermesError
 from .const import CONF_API_KEY
-from .llm import MCP_SERVER_DOMAIN, RESTRICTED_API_ID
+from .llm import MCP_SERVER_DOMAIN, mcp_entry_is_restricted
 
 TO_REDACT = {CONF_API_KEY}
 
@@ -60,12 +60,21 @@ def _mcp_server_info(hass: HomeAssistant) -> dict[str, Any]:
     if not entries:
         return {"configured": False, "restricted_api_selected": False}
 
-    selected = entries[0].data.get(CONF_LLM_HASS_API) or []
-    if isinstance(selected, str):
-        selected = [selected]
+    entry_info: list[dict[str, Any]] = []
+    for entry in entries:
+        selected = entry.data.get(CONF_LLM_HASS_API) or []
+        if isinstance(selected, str):
+            selected = [selected]
+        entry_info.append(
+            {
+                "selected_apis": list(selected),
+                "restricted": mcp_entry_is_restricted(entry),
+            }
+        )
 
     return {
         "configured": True,
-        "selected_apis": list(selected),
-        "restricted_api_selected": RESTRICTED_API_ID in selected,
+        "selected_apis": [api for info in entry_info for api in info["selected_apis"]],
+        "restricted_api_selected": all(info["restricted"] for info in entry_info),
+        "entries": entry_info,
     }

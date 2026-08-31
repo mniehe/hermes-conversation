@@ -33,9 +33,21 @@ def _entity_id(hass: HomeAssistant, entry: MockConfigEntry) -> str:
     return entity
 
 
-async def _converse(hass: HomeAssistant, text: str, agent_id: str):
+async def _converse(
+    hass: HomeAssistant,
+    text: str,
+    agent_id: str,
+    *,
+    context: Context | None = None,
+    extra_system_prompt: str | None = None,
+):
     return await conversation.async_converse(
-        hass, text, None, Context(), agent_id=agent_id
+        hass,
+        text,
+        None,
+        context or Context(),
+        agent_id=agent_id,
+        extra_system_prompt=extra_system_prompt,
     )
 
 
@@ -162,6 +174,62 @@ async def test_configured_prompt_leads_the_transcript(
     messages = aioclient_mock.mock_calls[-1][2]["messages"]
     assert messages[0] == {"role": "system", "content": "You are terse."}
     assert messages[-1]["role"] == "user"
+
+
+async def test_configured_prompt_is_rendered(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
+) -> None:
+    entry = await load_entry({CONF_PROMPT: "You are in {{ ha_name }}."})
+    aioclient_mock.post(COMPLETIONS_URL, content=_reply("ok"))
+
+    await _converse(hass, "hello", _entity_id(hass, entry))
+
+    messages = aioclient_mock.mock_calls[-1][2]["messages"]
+    assert messages[0] == {
+        "role": "system",
+        "content": f"You are in {hass.config.location_name}.",
+    }
+
+
+async def test_configured_prompt_receives_user_name(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
+) -> None:
+    user = await hass.auth.async_create_user("Mark")
+    entry = await load_entry({CONF_PROMPT: "You are helping {{ user_name }}."})
+    aioclient_mock.post(COMPLETIONS_URL, content=_reply("ok"))
+
+    await _converse(
+        hass,
+        "hello",
+        _entity_id(hass, entry),
+        context=Context(user_id=user.id),
+    )
+
+    messages = aioclient_mock.mock_calls[-1][2]["messages"]
+    assert messages[0] == {
+        "role": "system",
+        "content": "You are helping Mark.",
+    }
+
+
+async def test_extra_system_prompt_is_sent(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
+) -> None:
+    entry = await load_entry()
+    aioclient_mock.post(COMPLETIONS_URL, content=_reply("ok"))
+
+    await _converse(
+        hass,
+        "hello",
+        _entity_id(hass, entry),
+        extra_system_prompt="This request came from the kitchen satellite.",
+    )
+
+    messages = aioclient_mock.mock_calls[-1][2]["messages"]
+    assert messages[0] == {
+        "role": "system",
+        "content": "This request came from the kitchen satellite.",
+    }
 
 
 async def test_no_prompt_sends_no_system_message(

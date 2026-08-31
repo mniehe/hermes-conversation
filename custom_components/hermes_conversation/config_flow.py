@@ -216,17 +216,20 @@ class HermesSubentryFlowHandler(ConfigSubentryFlow):
             return self.async_abort(reason="entry_not_loaded")
 
         if user_input is not None:
+            title = user_input.pop(CONF_NAME)
             if is_new:
-                return self.async_create_entry(
-                    title=user_input.pop(CONF_NAME), data=user_input
-                )
-            return self.async_update_and_abort(
-                entry, self._get_reconfigure_subentry(), data=user_input
+                return self.async_create_entry(title=title, data=user_input)
+            return self.async_update_reload_and_abort(
+                entry,
+                self._get_reconfigure_subentry(),
+                title=title,
+                data=user_input,
             )
 
-        defaults: Mapping[str, Any] = (
-            {} if is_new else self._get_reconfigure_subentry().data
-        )
+        defaults: Mapping[str, Any] = {}
+        if not is_new:
+            subentry = self._get_reconfigure_subentry()
+            defaults = {CONF_NAME: subentry.title, **subentry.data}
         return self.async_show_form(
             step_id="user" if is_new else "reconfigure",
             data_schema=self.add_suggested_values_to_schema(
@@ -241,9 +244,9 @@ class HermesSubentryFlowHandler(ConfigSubentryFlow):
         except HermesError:
             models = [DEFAULT_MODEL]
 
-        schema: VolDictType = {}
-        if is_new:
-            schema[vol.Required(CONF_NAME, default=DEFAULT_CONVERSATION_NAME)] = str
+        schema: VolDictType = {
+            vol.Required(CONF_NAME, default=DEFAULT_CONVERSATION_NAME): str
+        }
 
         schema.update(
             {

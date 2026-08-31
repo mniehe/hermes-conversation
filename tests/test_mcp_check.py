@@ -43,7 +43,14 @@ async def test_no_issue_when_restricted_api_selected(
 
 
 @pytest.mark.parametrize(
-    "apis", [["assist"], "assist", None, ["assist", "something_else"]]
+    "apis",
+    [
+        ["assist"],
+        "assist",
+        None,
+        ["assist", "something_else"],
+        [RESTRICTED_API_ID, "assist"],
+    ],
 )
 async def test_issue_when_boundary_is_bypassed(
     hass: HomeAssistant, load_entry, apis
@@ -59,14 +66,41 @@ async def test_issue_when_boundary_is_bypassed(
 
 async def test_issue_clears_when_corrected(hass: HomeAssistant, load_entry) -> None:
     _add_mcp_server(hass, ["assist"])
-    entry = await load_entry()
+    await load_entry()
     assert _issue(hass) is not None
 
     hass.config_entries.async_update_entry(
         hass.config_entries.async_entries(MCP_SERVER_DOMAIN)[0],
         data={CONF_LLM_HASS_API: [RESTRICTED_API_ID]},
     )
-    await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
 
     assert _issue(hass) is None
+
+
+async def test_issue_appears_when_mcp_is_reconfigured_unsafely(
+    hass: HomeAssistant, load_entry
+) -> None:
+    _add_mcp_server(hass, [RESTRICTED_API_ID])
+    await load_entry()
+    assert _issue(hass) is None
+
+    hass.config_entries.async_update_entry(
+        hass.config_entries.async_entries(MCP_SERVER_DOMAIN)[0],
+        data={CONF_LLM_HASS_API: [RESTRICTED_API_ID, "assist"]},
+    )
+    await hass.async_block_till_done()
+
+    assert _issue(hass) is not None
+
+
+async def test_issue_when_any_mcp_entry_bypasses_boundary(
+    hass: HomeAssistant, load_entry
+) -> None:
+    """Every non-admin MCP endpoint must enforce the boundary."""
+    _add_mcp_server(hass, [RESTRICTED_API_ID])
+    _add_mcp_server(hass, ["assist"])
+
+    await load_entry()
+
+    assert _issue(hass) is not None

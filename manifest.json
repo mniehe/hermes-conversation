@@ -1,0 +1,12 @@
+{
+  "domain": "hermes_conversation",
+  "name": "Hermes Conversation",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": ["conversation"],
+  "documentation": "https://hermes-agent.nousresearch.com/docs/user-guide/features/api-server",
+  "integration_type": "service",
+  "iot_class": "local_push",
+  "requirements": [],
+  "version": "0.1.0"
+}

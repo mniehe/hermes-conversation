@@ -65,19 +65,23 @@ then.
 
 ## Development
 
-The repo ships a Nix devshell with Python, uv, ruff and mypy:
+[uv][uv] handles everything; Python 3.14.2 or later is the only prerequisite.
 
 ```sh
-nix develop          # or `direnv allow`
 uv sync              # install dev dependencies
 uv run pytest        # tests
 uv run ruff check .  # lint
+uv run ruff format . # format
 uv run mypy custom_components
 ```
 
-Home Assistant pins its dependency closure tightly and releases monthly, so uv
-resolves the Python packages from `pyproject.toml` while Nix supplies the
-toolchain. `uv.lock` is committed to keep CI reproducible.
+Home Assistant pins its dependency closure exactly and releases monthly, so the
+dev dependencies pin `pytest-homeassistant-custom-component` to the release that
+matches the Home Assistant version this targets. `uv.lock` is committed to keep
+CI reproducible.
+
+A `flake.nix` is included for Nix users — `nix develop` gives you the same
+toolchain — but it is entirely optional and nothing depends on it.
 
 ## Licence
 
@@ -86,3 +90,4 @@ MIT — see [LICENSE](LICENSE).
 [ha]: https://www.home-assistant.io/
 [hacs]: https://hacs.xyz/
 [hermes]: https://github.com/NousResearch/hermes-agent
+[uv]: https://docs.astral.sh/uv/

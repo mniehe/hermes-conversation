@@ -14,4 +14,6 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-      - run: uv run pytest --cov=custom_components --cov-report=term-missing
+      - run: uv run pytest --cov=custom_components --cov-report=term-missing --cov-report=json
+      - name: Capability boundary must be fully covered
+        run: uv run python scripts/check_guard_coverage.py

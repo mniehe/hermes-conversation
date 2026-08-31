@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
@@ -10,6 +12,8 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from .client import HermesAuthError, HermesClient, HermesConnectionError
 from .const import CONF_API_KEY, CONF_BASE_URL, CONF_PROFILE
 from .llm import async_check_mcp_server, async_register_api
+
+_LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = (Platform.CONVERSATION,)
 
@@ -26,11 +30,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: HermesConfigEntry) -> bo
     )
 
     try:
-        await client.async_list_models()
+        models = await client.async_list_models()
     except HermesAuthError as err:
         raise ConfigEntryAuthFailed(str(err)) from err
     except HermesConnectionError as err:
         raise ConfigEntryNotReady(str(err)) from err
+
+    _LOGGER.debug(
+        "Connected to Hermes profile %s; %d model(s) advertised",
+        entry.data[CONF_PROFILE],
+        len(models),
+    )
 
     entry.runtime_data = client
     entry.async_on_unload(async_register_api(hass))

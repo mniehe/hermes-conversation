@@ -348,3 +348,5 @@ result-*
 # uv resolves the dev dependencies; the lock file is committed so CI is
 # reproducible, and .venv is not.
 .venv/
+
+coverage.json

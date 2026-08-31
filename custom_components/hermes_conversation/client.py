@@ -92,10 +92,20 @@ class HermesClient:
                         raise HermesAuthError("Hermes rejected the API key")
                     response.raise_for_status()
 
+                    _LOGGER.debug(
+                        "Streaming from profile %s with model %s (%d messages)",
+                        self._profile,
+                        model,
+                        len(messages),
+                    )
                     async for raw in response.content:
                         if (chunk := _parse_sse_line(raw)) is not None:
                             yield chunk
-        except (TimeoutError, aiohttp.ClientError) as err:
+        except TimeoutError as err:
+            raise HermesConnectionError(
+                f"Timed out after {timeout}s waiting for profile {self._profile}"
+            ) from err
+        except aiohttp.ClientError as err:
             raise HermesConnectionError(str(err) or type(err).__name__) from err
 
     async def _request(

@@ -1,5 +1,6 @@
 """The conversation entity must surface failures, not paper over them."""
 
+import logging
 from http import HTTPStatus
 from unittest.mock import patch
 
@@ -18,7 +19,7 @@ from custom_components.hermes_conversation.const import DOMAIN
 
 from . import sse
 from .conftest import EntryLoader
-from .const import COMPLETIONS_URL
+from .const import COMPLETIONS_URL, PROFILE
 
 
 def _reply(text: str) -> bytes:
@@ -192,3 +193,16 @@ async def test_configured_timeout_is_applied(
         await _converse(hass, "hello", _entity_id(hass, entry))
 
     assert captured == [10]
+
+
+async def test_failures_name_the_profile_in_logs(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry, caplog
+) -> None:
+    """With several profiles configured, a bare failure message is useless."""
+    entry = await load_entry()
+    aioclient_mock.post(COMPLETIONS_URL, exc=TimeoutError)
+
+    await _converse(hass, "hello", _entity_id(hass, entry))
+
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any(PROFILE in r.getMessage() for r in warnings)

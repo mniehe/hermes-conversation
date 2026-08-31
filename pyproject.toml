@@ -48,6 +48,11 @@ no_implicit_reexport = false
 module = ["tests.*"]
 disallow_untyped_defs = false
 
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

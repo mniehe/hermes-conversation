@@ -18,6 +18,7 @@ from . import HermesConfigEntry
 from .client import HermesAuthError, HermesConnectionError
 from .const import (
     CONF_BASE_URL,
+    CONF_PROFILE,
     DEFAULT_MODEL,
     DOMAIN,
     MANUFACTURER,
@@ -127,6 +128,10 @@ class HermesConversationEntity(
             ):
                 pass
         except HermesAuthError as err:
+            _LOGGER.warning(
+                "Hermes rejected the API key for profile %s; requesting reauth",
+                self.entry.data[CONF_PROFILE],
+            )
             # Raising ConfigEntryAuthFailed here would not reach HA's reauth
             # machinery: async_converse catches it as a plain HomeAssistantError
             # and turns it into an error response.
@@ -135,7 +140,11 @@ class HermesConversationEntity(
                 translation_domain=DOMAIN, translation_key="invalid_auth"
             ) from err
         except HermesConnectionError as err:
-            _LOGGER.debug("Hermes request failed: %s", err)
+            _LOGGER.warning(
+                "Hermes profile %s did not answer: %s",
+                self.entry.data[CONF_PROFILE],
+                err,
+            )
             raise HomeAssistantError(
                 translation_domain=DOMAIN, translation_key="cannot_connect"
             ) from err

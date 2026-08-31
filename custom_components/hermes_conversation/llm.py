@@ -27,11 +27,15 @@ _LOGGER = logging.getLogger(__name__)
 RESTRICTED_API_ID = f"{DOMAIN}_restricted"
 RESTRICTED_API_NAME = "Assist (locks and doors withheld)"
 
-FORBIDDEN_DOMAINS = ("lock",)
+# Whole domains the agent may never write to. Alarm panels are included even
+# though today's Assist tools cannot reach them: the boundary should already
+# hold if Home Assistant adds an arming or disarming intent later.
+FORBIDDEN_DOMAINS = ("lock", "alarm_control_panel")
 FORBIDDEN_COVER_CLASSES = ("door", "garage")
 
 GUARD_PROMPT = (
-    "\n\nYou cannot lock, unlock, open or close doors, garage doors or locks. "
+    "\n\nYou cannot lock, unlock, open or close doors, garage doors or locks, "
+    "and you cannot arm or disarm alarm panels. "
     "You can still report their state. Do not claim to have changed them."
 )
 
@@ -141,9 +145,10 @@ class GuardedTool(llm.Tool):
     ) -> JsonObjectType:
         """Refuse calls that would reach a lock or a door."""
         if _targets_forbidden(hass, tool_input.tool_args, llm_context.assistant):
-            _LOGGER.info(
-                "Refused %s: targets a lock or door (%s)",
+            _LOGGER.warning(
+                "Refused %s from %s: the target resolves to a lock or door (%s)",
                 tool_input.tool_name,
+                llm_context.platform,
                 tool_input.tool_args,
             )
             return {"error": REFUSAL}

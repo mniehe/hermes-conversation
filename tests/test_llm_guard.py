@@ -1,5 +1,6 @@
 """The capability boundary. A missing branch here is a vulnerability."""
 
+import logging
 from unittest.mock import patch
 
 import pytest
@@ -236,3 +237,27 @@ async def test_guard_failure_refuses(hass: HomeAssistant, house, calls) -> None:
 
     assert _refused(result)
     assert not calls["light.turn_off"]
+
+
+async def test_refusal_is_logged_at_warning(hass: HomeAssistant, house, caplog) -> None:
+    """A blocked attempt on a door is worth seeing without enabling debug."""
+    caplog.set_level(logging.INFO)
+
+    await _call(hass, "HassTurnOff", name="front door")
+
+    refusals = [
+        record
+        for record in caplog.records
+        if record.levelno >= logging.WARNING and "Refused" in record.message
+    ]
+    assert refusals
+
+
+async def test_alarm_panel_is_refused(hass: HomeAssistant, load_entry, calls) -> None:
+    """Assist cannot reach alarm panels today; the boundary must not depend on that."""
+    await load_entry()
+    _expose(hass, "alarm_control_panel.house", "house alarm")
+
+    result = await _call(hass, "HassTurnOff", name="house alarm")
+
+    assert _refused(result)

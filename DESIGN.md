@@ -353,9 +353,19 @@ this hook adds tools to Assist — it cannot be used to *restrict*, which is why
 `conversation.async_set_agent` in `async_added_to_hass`
 (`openai_conversation/conversation.py:34-36,61`); the POC is correct, keep it.
 
-Two you did not list: the hardcoded `_attr_name` means every profile's entity is
-called "Hermes home-assist"; and `continue_conversation = answer.endswith("?")`
-(`conversation.py:114`) reopens the mic on any rhetorical question.
+One you did not list: the hardcoded `_attr_name` means every profile's entity is
+called "Hermes home-assist".
+
+**A correction to my own gap list.** I earlier called
+`continue_conversation = answer.endswith("?")` a defect, claiming core derives
+this from the chat log rather than from punctuation. Both halves were wrong in
+the same place: core *does* derive it from the chat log, and
+`ChatLog.continue_conversation` (`chat_log.py:355-373`) is itself a trailing
+question-mark test. The POC matched core's behaviour. Delegating to
+`conversation.async_get_result_from_chat_log` is still right — it is the
+supported helper and also recognises the Greek and Chinese question marks the
+hand-rolled check missed — but it is a small correctness gain, not the bug I
+described.
 
 Gap 1 changes meaning under this design: the conversation entity **still** has no
 tool calling, and that is now correct rather than a defect. Control arrives via

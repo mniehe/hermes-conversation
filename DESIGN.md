@@ -6,11 +6,19 @@ Verified against:
 
 | Thing | Version | How it was read |
 |---|---|---|
-| Home Assistant core | **2026.8.3** | `homeassistant-2026.8.3-py3-none-any.whl` from PyPI |
+| Home Assistant core | **2026.8.2** (your deployment) | Wheels for 2026.8.2 and 2026.8.3 from PyPI, diffed — see below |
 | Hermes agent | **0.20.5** | `/nix/store/…-hermes-agent-env/lib/python3.12/site-packages` (matches pinned commit `fcbd107`, whose subject is `chore: release v0.20.5`) |
 
 Every claim below cites the file it came from. Where the brief and the source
 disagree, the source wins and the disagreement is called out.
+
+Your deployment is `ghcr.io/home-assistant/home-assistant:2026.8.2`
+(`hosts/cougar/services/home-assistant.nix:40`). I had designed against 2026.8.3,
+so I diffed the two wheels across the surface this integration touches. Every file
+it depends on — `components/conversation/{chat_log,entity,models}.py`,
+`helpers/llm.py`, and all of `openai_conversation/` — is **byte-identical**. The
+only differences are `default_agent.py` (unused here) and two translation files.
+**The design holds exactly as written on 2026.8.2.**
 
 ---
 
@@ -108,12 +116,21 @@ Hermes or Telegram bypasses it. Resolution: **HA narrows, Hermes ceilings.**
 
 ```
 effective_capabilities =
-        (policy fetched from HA)          ← what you picked in the HA UI
+        (tools registered at all)         ← per-profile plugins.enabled
+      ∩ (policy fetched from HA)          ← what you picked in the HA UI
       ∩ (plugin allowlist in plugin.yaml) ← the ceiling, set on the Hermes box
       − (hard never-list, in code)        ← not configurable anywhere
 ```
 
-Three layers, each able only to *remove*:
+Four layers, each able only to *remove*:
+
+**Layer 0 — the profile boundary. Free, and stronger than anything below it.**
+Hermes enables plugins *per profile*: `plugins.enabled = ["web-crawl4ai"]` sits
+inside each profile's `settings` block (`hosts/cougar/hermes-vm.nix:305`). Enable
+the Home Assistant plugin only for `home-assist`, and the `ha_*` tools do not
+exist in your `wife` profile or the default one — not "are denied", but are never
+registered. No policy evaluation to get wrong. This is the cheapest and most
+robust layer, and it is worth using deliberately rather than by accident.
 
 **Layer 1 — hard never-list. Compiled in, no config key reaches it.**
 `lock.open`, `lock.unlock`, `alarm_control_panel.alarm_disarm`,
@@ -170,30 +187,60 @@ This is better news than it sounds: subentries are exactly the mechanism for
 option** as you asked mid-session — without a second config entry or a
 delete-and-re-add.
 
-### Config entry — the connection (one per Hermes gateway)
+### Config entry — one per Hermes **profile**
+
+Your Nix config settles a question I had guessed wrong. Named profiles
+"authenticate through `/p/<profile>/` with their own `API_SERVER_KEY`"
+(`hosts/cougar/hermes-vm.nix:192-193`), and each profile's key comes from its own
+sops env file (`hermes-home-assist.env`, `hermes-wife.env`). **Profile and API key
+are one credential pair and cannot be configured independently.**
+
+My first draft put `api_key` on the entry and `profile` on the subentry. That is
+wrong: switching a subentry's profile would silently keep the previous profile's
+key and 401. It also breaks reauth, which HA runs against a config *entry* — an
+entry-level reauth would not know which subentry's key had expired.
+
+So the config entry is **per profile**:
 
 | Key | Selector | Stored in | Notes |
 |---|---|---|---|
 | `base_url` | `TextSelector(URL)` | `entry.data` | **Gateway root**, e.g. `http://10.0.0.3:8642` — *not* the `/p/…/v1` path |
-| `api_key` | `TextSelector(PASSWORD)` | `entry.data` | `Authorization: Bearer` |
+| `profile` | `TextSelector` | `entry.data` | e.g. `home-assist`. **Free text — see below** |
+| `api_key` | `TextSelector(PASSWORD)` | `entry.data` | That profile's `API_SERVER_KEY` |
 
-Validated by `GET {base_url}/v1/models`. `401 → invalid_auth`, otherwise
-`cannot_connect`. `unique_id = base_url`.
+Validated by `GET {base_url}/p/{profile}/v1/models`. `401 → invalid_auth`,
+otherwise `cannot_connect`. `unique_id = f"{base_url}#{profile}"`, so the same
+gateway can host several profiles as several entries — which is what
+"multiple config entries must coexist" asked for.
 
-Dropping `/p/<profile>/v1` from the stored URL is what makes the profile
-re-selectable later. The path is composed per request (section 4).
+**You still get to change the profile without deleting the entry.** Core supports
+an entry-level `async_step_reconfigure` returning `async_update_reload_and_abort`
+(`openai_conversation/config_flow.py:249`), so profile, URL and key are all
+editable in place. That satisfies the no-delete-and-re-add requirement; it just
+happens on the entry rather than the subentry, because that is where the
+credential lives.
 
-Also here: **reauth** (`async_step_reauth` / `async_step_reauth_confirm`)
-re-prompting for `api_key` only, triggered by `ConfigEntryAuthFailed` on a
-runtime 401.
+**Reauth** (`async_step_reauth` / `async_step_reauth_confirm`) re-prompts for
+`api_key` only, triggered by `ConfigEntryAuthFailed` on a runtime 401.
 
-### Conversation subentry — one per agent
+**Why `profile` is free text and not a dropdown:** there is no profile-listing
+endpoint. `api_server.py` handles the `/p/<profile>/` prefix in
+`_make_profile_prefix_middleware` (2041) against a `multiplex_profile_allowlist`
+(2002) but never exposes that list over HTTP. The field is validated by probing
+`GET /p/{profile}/v1/models` on submit.
+
+**`gateway.multiplex_profiles` is already `true`** on your box
+(`hosts/cougar/hermes-vm.nix:191`), so the prefix is live. The config flow will
+still probe `/p/{profile}/v1/models` against `/v1/models` and warn if they are
+indistinguishable — someone else installing this from HACS will not have it on,
+and a silently-wrong profile is a miserable thing to debug.
+
+### Conversation subentry — one per agent, under a profile's entry
 
 | Key | Selector | Notes |
 |---|---|---|
 | `name` | `str` | Entity name; new subentries only |
-| `profile` | `TextSelector` | Hermes profile, e.g. `home-assist`. **Free text — see below** |
-| `model` | `SelectSelector` | Populated from `GET /p/<profile>/v1/models`; `custom_value=True` |
+| `model` | `SelectSelector` | Populated from `GET /p/{profile}/v1/models` for this entry's profile; `custom_value=True` |
 | `prompt` | `TemplateSelector()` | System prompt, default `llm.DEFAULT_INSTRUCTIONS_PROMPT` |
 | `timeout` | `NumberSelector` | 10–300 s, default 120 |
 | `allowed_domains` | `SelectSelector(multiple=True)` | Layer-3 policy: which HA domains the agent may act on |
@@ -322,9 +369,24 @@ hermes_plugin/
   policy.py          _check_allowed(), policy fetch + cache, the three layers
 ```
 
-Symlink-friendly: no absolute paths, no writes inside the plugin directory, all
-state in memory or under Hermes' own state dir — so
-`/data/hermes/.hermes/plugins/home-assistant → /nix/store/…` works.
+This mirrors your existing `modules/nixos/hermes-vm-plugins/crawl4ai/`
+(`plugin.yaml`, `__init__.py`, `provider.py`), and deploys the same way — a
+systemd-tmpfiles symlink, confirmed at `modules/nixos/hermes-vm.nix:787`:
+
+```
+"L+ /data/hermes/.hermes/plugins/crawl4ai - - - - ${./hermes-vm-plugins/crawl4ai}"
+```
+
+So: no absolute paths, no writes inside the plugin directory, all state in memory
+or under Hermes' own state dir. Since the plugin lives in *this* repo rather than
+in dotfiles, the dotfiles side gets a fetched source (flake input or pinned
+tarball) whose store path is the symlink target.
+
+**Two dotfiles changes this will need** — flagged now, not made:
+`home-assist` currently has only `secretEnvFile` and no `settings` block
+(`hosts/cougar/hermes-vm.nix:346-348`), so it needs
+`settings.plugins.enabled = ["home-assistant"]`, plus a tmpfiles line for the new
+plugin and `HA_TOKEN` added to `hermes-home-assist.env`.
 
 ### Tools
 
@@ -494,10 +556,12 @@ the Python packages.
 
 ## Open questions for you
 
-1. **Hermes `multiplex_profiles`** — is it already on? If not, enabling it is a
-   prerequisite, and I should say so in the README rather than assume.
+1. ~~**Hermes `multiplex_profiles`**~~ — **answered:** already `true`
+   (`hosts/cougar/hermes-vm.nix:191`). Still documented in the README for other
+   installers.
 2. **Dedicated HA user for the agent** — do you want me to document creating one,
-   or will you reuse an existing token?
+   or will you reuse an existing token? Either way `HA_TOKEN` needs adding to
+   `hermes-home-assist.env`, which only you can do.
 3. **Never-list scope** — I have `lock.open`/`lock.unlock`,
    `alarm_control_panel.alarm_disarm`, garage covers, and `homeassistant.*`.
    Anything else that should be un-configurable? Frigate, or anything on the

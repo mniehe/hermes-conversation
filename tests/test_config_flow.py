@@ -9,6 +9,7 @@ from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
+from custom_components.hermes_conversation.client import HermesClient
 from custom_components.hermes_conversation.const import (
     CONF_API_KEY,
     CONF_BASE_URL,
@@ -79,6 +80,27 @@ async def test_connection_error(
     result = await _submit(hass)
 
     assert result["errors"] == {"base": "cannot_connect"}
+
+
+async def test_malformed_model_payload_is_connection_error(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """A 200 response with the wrong JSON shape must stay inside the flow."""
+    aioclient_mock.get(MODELS_URL, json=[])
+
+    result = await _submit(hass)
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "cannot_connect"}
+
+
+async def test_non_string_model_ids_are_ignored(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    aioclient_mock.get(MODELS_URL, json={"data": [{"id": 42}, {"id": "hermes-agent"}]})
+    client = HermesClient(hass, BASE_URL, PROFILE, API_KEY)
+
+    assert await client.async_list_models() == ["hermes-agent"]
 
 
 async def test_duplicate_profile_aborts(

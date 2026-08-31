@@ -3,6 +3,7 @@
 from homeassistant.const import CONF_MODEL, CONF_NAME, CONF_PROMPT, CONF_TIMEOUT
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers import device_registry as dr
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
@@ -81,6 +82,7 @@ async def test_reconfigure_subentry_in_place(
     result = await hass.config_entries.subentries.async_configure(
         result["flow_id"],
         {
+            CONF_NAME: "Evening",
             CONF_MODEL: "home-assist",
             CONF_PROMPT: "You are terse.",
             CONF_TIMEOUT: 45,
@@ -91,5 +93,9 @@ async def test_reconfigure_subentry_in_place(
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
     assert len(entry.subentries) == 1
+    assert entry.subentries[subentry_id].title == "Evening"
     assert entry.subentries[subentry_id].data[CONF_PROMPT] == "You are terse."
     assert entry.subentries[subentry_id].data[CONF_TIMEOUT] == 45
+    device = dr.async_get(hass).async_get_device({(DOMAIN, subentry_id)})
+    assert device is not None
+    assert device.name == "Evening"

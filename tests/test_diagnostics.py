@@ -56,6 +56,27 @@ async def test_reports_whether_the_boundary_is_active(
     assert result["mcp_server"]["restricted_api_selected"] is True
 
 
+async def test_reports_any_unrestricted_mcp_entry(
+    hass: HomeAssistant, load_entry
+) -> None:
+    """A safe first entry must not hide a second unrestricted endpoint."""
+    MockConfigEntry(
+        domain="mcp_server", data={CONF_LLM_HASS_API: [RESTRICTED_API_ID]}
+    ).add_to_hass(hass)
+    MockConfigEntry(
+        domain="mcp_server", data={CONF_LLM_HASS_API: ["assist"]}
+    ).add_to_hass(hass)
+    entry = await load_entry()
+
+    result = await async_get_config_entry_diagnostics(hass, entry)
+
+    assert result["mcp_server"]["restricted_api_selected"] is False
+    assert result["mcp_server"]["entries"] == [
+        {"selected_apis": [RESTRICTED_API_ID], "restricted": True},
+        {"selected_apis": ["assist"], "restricted": False},
+    ]
+
+
 async def test_api_key_never_reaches_the_logs(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,

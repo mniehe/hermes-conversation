@@ -14,6 +14,7 @@ import logging
 from typing import Any, override
 
 from homeassistant.components.llm import LLMTools
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_LLM_HASS_API
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import intent, llm
@@ -46,6 +47,18 @@ REFUSAL = (
 
 # Slots that steer which entities an intent resolves to.
 TARGET_SLOTS = ("name", "area", "floor", "domain", "device_class")
+# Current Assist tool arguments that affect an action but never select targets.
+# A new argument is refused until it is deliberately classified here.
+NON_TARGET_SLOTS = (
+    "position",
+    "color",
+    "temperature",
+    "brightness",
+    "percentage",
+    "volume_level",
+    "is_volume_muted",
+)
+READ_ONLY_TOOLS = ("GetLiveContext", "GetDateTime")
 
 MCP_SERVER_DOMAIN = "mcp_server"
 ISSUE_UNRESTRICTED_MCP = "mcp_server_unrestricted"
@@ -64,11 +77,7 @@ def async_check_mcp_server(hass: HomeAssistant) -> None:
         ir.async_delete_issue(hass, DOMAIN, ISSUE_UNRESTRICTED_MCP)
         return
 
-    selected = entries[0].data.get(CONF_LLM_HASS_API) or []
-    if isinstance(selected, str):
-        selected = [selected]
-
-    if RESTRICTED_API_ID in selected:
+    if all(mcp_entry_is_restricted(entry) for entry in entries):
         ir.async_delete_issue(hass, DOMAIN, ISSUE_UNRESTRICTED_MCP)
         return
 
@@ -81,6 +90,14 @@ def async_check_mcp_server(hass: HomeAssistant) -> None:
         translation_key=ISSUE_UNRESTRICTED_MCP,
         translation_placeholders={"api_name": RESTRICTED_API_NAME},
     )
+
+
+def mcp_entry_is_restricted(entry: ConfigEntry) -> bool:
+    """Return whether an MCP entry exposes only the restricted API."""
+    selected = entry.data.get(CONF_LLM_HASS_API) or []
+    if isinstance(selected, str):
+        selected = [selected]
+    return selected == [RESTRICTED_API_ID]
 
 
 @callback
@@ -144,7 +161,9 @@ class GuardedTool(llm.Tool):
         llm_context: llm.LLMContext,
     ) -> JsonObjectType:
         """Refuse calls that would reach a lock or a door."""
-        if _targets_forbidden(hass, tool_input.tool_args, llm_context.assistant):
+        if self.name not in READ_ONLY_TOOLS and _targets_forbidden(
+            hass, tool_input.tool_args, llm_context.assistant
+        ):
             _LOGGER.warning(
                 "Refused %s from %s: the target resolves to a lock or door (%s)",
                 tool_input.tool_name,
@@ -167,6 +186,10 @@ def _targets_forbidden(
     broad enough to sweep a lock in is refused even when the model never
     mentioned it.
     """
+    if set(tool_args) - set(TARGET_SLOTS) - set(NON_TARGET_SLOTS):
+        # Unknown arguments may be target selectors added by a future Assist
+        # intent. They cannot become an accidental boundary bypass.
+        return True
     if not any(slot in tool_args for slot in TARGET_SLOTS):
         return False
 
@@ -189,23 +212,59 @@ def _forbidden_constraints(
     name = tool_args.get("name")
     area = tool_args.get("area")
     floor = tool_args.get("floor")
+    requested_domains = _string_values(tool_args.get("domain"))
+    requested_classes = _string_values(tool_args.get("device_class"))
+    constraints: list[intent.MatchTargetsConstraints] = []
 
-    return [
-        intent.MatchTargetsConstraints(
-            name=name,
-            area_name=area,
-            floor_name=floor,
-            domains=FORBIDDEN_DOMAINS,
-            assistant=assistant,
-            allow_duplicate_names=True,
-        ),
-        intent.MatchTargetsConstraints(
-            name=name,
-            area_name=area,
-            floor_name=floor,
-            domains=("cover",),
-            device_classes=FORBIDDEN_COVER_CLASSES,
-            assistant=assistant,
-            allow_duplicate_names=True,
-        ),
-    ]
+    forbidden_domains = tuple(
+        domain
+        for domain in FORBIDDEN_DOMAINS
+        if requested_domains is None or domain in requested_domains
+    )
+    if forbidden_domains:
+        constraints.append(
+            intent.MatchTargetsConstraints(
+                name=name,
+                area_name=area,
+                floor_name=floor,
+                domains=forbidden_domains,
+                device_classes=(
+                    tuple(requested_classes) if requested_classes else None
+                ),
+                assistant=assistant,
+                allow_duplicate_names=True,
+            )
+        )
+
+    forbidden_cover_classes = tuple(
+        device_class
+        for device_class in FORBIDDEN_COVER_CLASSES
+        if requested_classes is None or device_class in requested_classes
+    )
+    if (
+        requested_domains is None or "cover" in requested_domains
+    ) and forbidden_cover_classes:
+        constraints.append(
+            intent.MatchTargetsConstraints(
+                name=name,
+                area_name=area,
+                floor_name=floor,
+                domains=("cover",),
+                device_classes=forbidden_cover_classes,
+                assistant=assistant,
+                allow_duplicate_names=True,
+            )
+        )
+
+    return constraints
+
+
+def _string_values(value: Any) -> set[str] | None:
+    """Normalize a target selector without treating malformed data as narrowing."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return {value}
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return set(value)
+    return None

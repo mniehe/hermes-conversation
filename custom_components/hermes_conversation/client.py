@@ -75,7 +75,11 @@ class HermesClient:
         data = payload.get("data")
         if not isinstance(data, list):
             raise HermesConnectionError("Malformed model list")
-        return [item["id"] for item in data if isinstance(item, dict) and "id" in item]
+        return [
+            model_id
+            for item in data
+            if isinstance(item, dict) and isinstance((model_id := item.get("id")), str)
+        ]
 
     async def async_profile_prefix_honoured(self) -> bool | None:
         """Return whether Hermes routes on the /p/<profile>/ prefix.
@@ -151,7 +155,9 @@ class HermesClient:
                     if response.status == HTTPStatus.UNAUTHORIZED:
                         raise HermesAuthError("Hermes rejected the API key")
                     response.raise_for_status()
-                    result: dict[str, Any] = await response.json()
+                    result = await response.json()
+                    if not isinstance(result, dict):
+                        raise HermesConnectionError("Malformed JSON response")
         except (TimeoutError, aiohttp.ClientError) as err:
             raise HermesConnectionError(str(err) or type(err).__name__) from err
 

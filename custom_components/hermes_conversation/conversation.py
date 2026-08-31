@@ -1,32 +1,38 @@
-"""Chat-only Hermes conversation entity."""
+"""Conversation entity backed by a Hermes profile."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from typing import Any, Literal
+from typing import Literal, override
 
-import aiohttp
 from homeassistant.components import conversation
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import MATCH_ALL
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import intent
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import CONF_API_KEY, CONF_BASE_URL, DOMAIN, MODEL
+from . import HermesConfigEntry
+from .client import HermesAuthError, HermesConnectionError
+from .const import (
+    CONF_BASE_URL,
+    CONF_PROFILE,
+    DEFAULT_MODEL,
+    DOMAIN,
+    MANUFACTURER,
+    MODEL_NAME,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: HermesConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up the Hermes conversation entity."""
-    async_add_entities([HermesConversationEntity(hass, entry)])
+    async_add_entities([HermesConversationEntity(entry)])
 
 
 class HermesConversationEntity(
@@ -35,88 +41,73 @@ class HermesConversationEntity(
     """A Home Assistant conversation agent backed by Hermes."""
 
     _attr_has_entity_name = True
-    _attr_name = "Hermes home-assist"
-    _attr_unique_id = DOMAIN
+    _attr_name = None
 
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+    def __init__(self, entry: HermesConfigEntry) -> None:
         """Initialize the Hermes conversation entity."""
-        self.hass = hass
         self.entry = entry
+        self._attr_unique_id = entry.entry_id
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name=entry.title,
+            manufacturer=MANUFACTURER,
+            model=MODEL_NAME,
+            entry_type=DeviceEntryType.SERVICE,
+            configuration_url=entry.data[CONF_BASE_URL],
+            serial_number=entry.data[CONF_PROFILE],
+        )
 
     @property
+    @override
     def supported_languages(self) -> list[str] | Literal["*"]:
         """Return the supported languages."""
         return MATCH_ALL
 
+    @override
     async def async_added_to_hass(self) -> None:
         """Register the conversation agent."""
         await super().async_added_to_hass()
         conversation.async_set_agent(self.hass, self.entry, self)
 
+    @override
     async def async_will_remove_from_hass(self) -> None:
         """Unregister the conversation agent."""
         conversation.async_unset_agent(self.hass, self.entry)
         await super().async_will_remove_from_hass()
 
+    @override
     async def _async_handle_message(
         self,
         user_input: conversation.ConversationInput,
         chat_log: conversation.ChatLog,
     ) -> conversation.ConversationResult:
-        """Send the transcript to Hermes and return its final text response."""
-        messages: list[dict[str, str]] = []
-        messages.extend(
+        """Send the transcript to Hermes and return its response."""
+        messages = [
             {"role": content.role, "content": content.content}
             for content in chat_log.content
-            if content.role in {"user", "assistant"}
-            and isinstance(content.content, str)
+            if isinstance(
+                content, conversation.UserContent | conversation.AssistantContent
+            )
             and content.content
-        )
-        headers = {
-            "Authorization": f"Bearer {self.entry.data[CONF_API_KEY]}",
-            "Content-Type": "application/json",
-        }
-        payload: dict[str, Any] = {
-            "model": MODEL,
-            "messages": messages,
-            "stream": False,
-        }
-        base_url = self.entry.data[CONF_BASE_URL].rstrip("/")
+        ]
 
         try:
-            async with asyncio.timeout(120):
-                async with async_get_clientsession(self.hass).post(
-                    f"{base_url}/chat/completions",
-                    headers=headers,
-                    json=payload,
-                ) as response:
-                    response.raise_for_status()
-                    data = await response.json()
-            answer = data["choices"][0]["message"]["content"].strip()
-            if not answer:
-                raise ValueError("Hermes returned an empty response")
-        except (
-            TimeoutError,
-            aiohttp.ClientError,
-            KeyError,
-            TypeError,
-            ValueError,
-        ) as err:
-            _LOGGER.warning(
-                "Hermes conversation request failed: %s", type(err).__name__
-            )
-            answer = "Sorry, Hermes is unavailable right now."
+            answer = await self.entry.runtime_data.async_chat(DEFAULT_MODEL, messages)
+        except HermesAuthError as err:
+            # Raising ConfigEntryAuthFailed here would not reach HA's reauth
+            # machinery: async_converse catches it as a plain HomeAssistantError
+            # and turns it into an error response.
+            self.entry.async_start_reauth(self.hass)
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="invalid_auth"
+            ) from err
+        except HermesConnectionError as err:
+            _LOGGER.debug("Hermes request failed: %s", err)
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="cannot_connect"
+            ) from err
 
         chat_log.async_add_assistant_content_without_tools(
-            conversation.AssistantContent(
-                agent_id=user_input.agent_id,
-                content=answer,
-            )
+            conversation.AssistantContent(agent_id=user_input.agent_id, content=answer)
         )
-        intent_response = intent.IntentResponse(language=user_input.language)
-        intent_response.async_set_speech(answer)
-        return conversation.ConversationResult(
-            response=intent_response,
-            conversation_id=user_input.conversation_id,
-            continue_conversation=answer.rstrip().endswith("?"),
-        )
+        return conversation.async_get_result_from_chat_log(user_input, chat_log)

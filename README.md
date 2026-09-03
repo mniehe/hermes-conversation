@@ -63,15 +63,49 @@ supplied by a client, so control does not travel over the conversation. It goes
 the other way, over MCP, which means it works from **every** Hermes channel —
 Telegram included — not just a Home Assistant voice pipeline.
 
-**a. Make a dedicated Home Assistant user.** *Settings → People → Add person*,
-with "Allow person to login" on and **administrator off**. Log in as them once
-and create a long-lived access token from their profile page.
+**a. Make a dedicated Home Assistant user.**
 
-A separate user is worth the two minutes: the logbook then attributes agent
-actions to it, and disabling the user cuts the agent off without touching your
-own session.
+Give the agent its own account rather than reusing yours. It costs two minutes
+and buys three things: the logbook and history attribute every action to
+*Hermes*, so you can tell the agent's changes from your own; Home Assistant
+refuses admin-only surfaces to a non-admin account before this integration's own
+policy runs at all; and disabling that one user cuts the agent off instantly
+without touching your session.
 
-**b. Add the MCP server.** *Settings → Devices & Services → Add Integration →
+*Settings → People → Add person*
+
+1. **Name** it something you will recognise in the logbook — `Hermes`.
+2. Turn on **Allow login**. An *Add user* dialog opens.
+3. Set a **username** and a long random **password**. You will use it once, so
+   generate it rather than choose it; a password manager entry is enough.
+4. Turn on **Local access only** if Hermes runs on your LAN. It does in the
+   reference setup, and this stops the account being usable from outside your
+   network at all.
+5. Leave **Administrator** **off**. This is the point of the exercise — an admin
+   token would let the agent reconfigure Home Assistant itself.
+6. Select **Create**, then **Add**.
+
+**b. Create its long-lived access token.**
+
+Tokens belong to whoever is signed in, so this has to be done *as that user*.
+Open a private browser window and sign in as `Hermes`, then:
+
+*User profile* (your name, bottom-left) *→ Security → Long-lived access tokens →
+Create token*
+
+Name it after what will hold it — `hermes-agent` — and copy the token
+immediately. Home Assistant shows it once and never again.
+
+Long-lived tokens do not expire, so treat it like a password: put it straight
+into your secret store and don't paste it into a shell that keeps history. If it
+leaks, delete it from this same screen and the agent loses access at once.
+
+> A non-admin account is defence in depth and the audit trail — it is **not** the
+> lock boundary. Home Assistant's per-user permissions are too coarse to express
+> "everything except unlocking". What actually stops the agent opening your front
+> door is the restricted API in step **c** below.
+
+**c. Add the MCP server.** *Settings → Devices & Services → Add Integration →
 Model Context Protocol Server*. When it asks which API to expose, choose
 **"Assist (locks and doors withheld)"** — the one this integration adds.
 
@@ -79,7 +113,7 @@ Model Context Protocol Server*. When it asks which API to expose, choose
 > unlocking doors. Nothing errors if you do; this integration raises a repair
 > warning instead of failing quietly.
 
-**c. Point Hermes at it.** In the profile's config:
+**d. Point Hermes at it.** In the profile's config:
 
 ```yaml
 mcp_servers:
@@ -89,10 +123,13 @@ mcp_servers:
       Authorization: "Bearer ${HA_TOKEN}"
 ```
 
+`HA_TOKEN` is the token from step **b**; set it in whatever holds your Hermes
+secrets rather than inlining it here.
+
 Use the bare `/api/mcp`. The `/api/mcp/<api_id>` form requires an *administrator*
 token for anything other than Assist, which would undo the dedicated user.
 
-**d. Expose what it may see.** *Settings → Voice assistants → Expose*. The agent
+**e. Expose what it may see.** *Settings → Voice assistants → Expose*. The agent
 can only see and act on exposed entities.
 
 ## What the agent cannot do

@@ -267,7 +267,9 @@ class GuardedTool(llm.Tool):
                 )
             }
 
-        if _targets_forbidden(hass, tool_input.tool_args, llm_context.assistant):
+        if _targets_forbidden(
+            hass, self.name, tool_input.tool_args, llm_context.assistant
+        ):
             _LOGGER.warning(
                 "Refused %s from %s: the target resolves to a lock or door (%s)",
                 tool_input.tool_name,
@@ -298,7 +300,10 @@ def _unknown_arguments(tool_args: dict[str, Any]) -> set[str]:
 
 
 def _targets_forbidden(
-    hass: HomeAssistant, tool_args: dict[str, Any], assistant: str | None
+    hass: HomeAssistant,
+    tool_name: str,
+    tool_args: dict[str, Any],
+    assistant: str | None,
 ) -> bool:
     """Return whether this call could resolve to something off limits.
 
@@ -314,7 +319,7 @@ def _targets_forbidden(
 
     try:
         matched = intent.async_match_targets(
-            hass, _handler_constraints(tool_args, assistant)
+            hass, _handler_constraints(hass, tool_name, tool_args, assistant)
         )
     except Exception:
         # An unresolvable match must not become an accidental allow.
@@ -325,28 +330,50 @@ def _targets_forbidden(
 
 
 def _handler_constraints(
-    tool_args: dict[str, Any], assistant: str | None
+    hass: HomeAssistant,
+    tool_name: str,
+    tool_args: dict[str, Any],
+    assistant: str | None,
 ) -> intent.MatchTargetsConstraints:
     """Build the match the intent handler itself would run.
 
     Mirrors DynamicServiceIntentHandler: a name of "all" means no name
-    constraint, so a sweep resolves to everything the other slots allow.
+    constraint, and an intent that only ever acts on its own domain (media
+    players, fans, vacuums) only matches that domain, so "pause the living
+    room" never trips over a lock in the same room.
     """
     name = tool_args.get("name")
     if name == ALL_ENTITIES:
         name = None
 
+    handler = _service_handler(hass, tool_name)
     domains = _string_values(tool_args.get("domain"))
-    device_classes = _string_values(tool_args.get("device_class"))
+    if "domain" not in tool_args and handler is not None:
+        domains = handler.required_domains
+
     return intent.MatchTargetsConstraints(
         name=name,
         area_name=tool_args.get("area"),
         floor_name=tool_args.get("floor"),
         domains=domains,
-        device_classes=device_classes,
+        device_classes=_string_values(tool_args.get("device_class")),
+        features=handler.required_features if handler else None,
+        states=handler.required_states if handler else None,
         assistant=assistant,
         allow_duplicate_names=True,
     )
+
+
+def _service_handler(
+    hass: HomeAssistant, tool_name: str
+) -> intent.DynamicServiceIntentHandler | None:
+    """Return the service intent handler behind an Assist tool, if any."""
+    for handler in intent.async_get(hass):
+        if handler.intent_type == tool_name and isinstance(
+            handler, intent.DynamicServiceIntentHandler
+        ):
+            return handler
+    return None
 
 
 def _is_forbidden(state: State) -> bool:

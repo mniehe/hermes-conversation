@@ -272,9 +272,12 @@ async def test_guard_failure_refuses(hass: HomeAssistant, house, calls) -> None:
 
 async def test_unknown_target_slot_fails_closed(hass: HomeAssistant, house) -> None:
     """A future write intent must not bypass the guard with a new target slot."""
-    assert _targets_forbidden(hass, {"entity_id": "lock.front_door"}, ASSISTANT)
+    assert _targets_forbidden(
+        hass, "HassTurnOff", {"entity_id": "lock.front_door"}, ASSISTANT
+    )
     assert _targets_forbidden(
         hass,
+        "HassTurnOff",
         {"domain": ["light"], "entity_id": "lock.front_door"},
         ASSISTANT,
     )
@@ -284,9 +287,9 @@ async def test_target_constraint_normalization_fails_safe(
     hass: HomeAssistant, house
 ) -> None:
     """Legacy strings narrow safely; malformed values do not narrow at all."""
-    assert not _targets_forbidden(hass, {"domain": "light"}, ASSISTANT)
-    assert not _targets_forbidden(hass, {"position": 50}, ASSISTANT)
-    assert _targets_forbidden(hass, {"domain": 42}, ASSISTANT)
+    assert not _targets_forbidden(hass, "HassTurnOff", {"domain": "light"}, ASSISTANT)
+    assert not _targets_forbidden(hass, "HassTurnOff", {"position": 50}, ASSISTANT)
+    assert _targets_forbidden(hass, "HassTurnOff", {"domain": 42}, ASSISTANT)
 
 
 async def test_refusal_is_logged_at_warning(hass: HomeAssistant, house, caplog) -> None:
@@ -315,7 +318,9 @@ async def test_alarm_panel_is_refused(hass: HomeAssistant, load_entry, calls) ->
 
 async def test_list_intent_arguments_pass_the_guard(hass: HomeAssistant, house) -> None:
     """Shopping list arguments are values, not targets; the guard must pass them."""
-    assert not _targets_forbidden(hass, {"item": "milk", "name": "Shopping"}, ASSISTANT)
+    assert not _targets_forbidden(
+        hass, "HassListAddItem", {"item": "milk", "name": "Shopping"}, ASSISTANT
+    )
 
 
 @pytest.mark.parametrize(
@@ -434,3 +439,24 @@ async def test_unknown_argument_refusal_names_it(hass: HomeAssistant, house) -> 
     assert _refused(result)
     assert "velocity" in result["error"]
     assert "lock" not in result["error"]
+
+
+async def test_domain_bound_intent_ignores_a_lock_in_the_room(
+    hass: HomeAssistant, load_entry, calls
+) -> None:
+    """HassMediaPause only ever touches media players; the guard must agree."""
+    await load_entry()
+    assert await async_setup_component(hass, "media_player", {})
+    pauses = async_mock_service(hass, "media_player", "media_pause")
+    await _in_area(hass, "lock.patio", "patio door", "Living Room")
+    await _in_area(hass, "media_player.tv", "tv", "Living Room")
+    hass.states.async_set(
+        "media_player.tv",
+        "playing",
+        {ATTR_FRIENDLY_NAME: "tv", "supported_features": 1},
+    )
+
+    result = await _call(hass, "HassMediaPause", area="Living Room")
+
+    assert not _refused(result)
+    assert len(pauses) == 1

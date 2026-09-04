@@ -59,3 +59,18 @@ DEFAULT_PROMPT: Final = "\n".join(
         "about the house, and confirm briefly after acting.",
     )
 )
+
+# Whole domains the agent may never write to. Alarm panels are included even
+# though today's Assist tools cannot reach them: the boundary should already
+# hold if Home Assistant adds an arming or disarming intent later.
+FORBIDDEN_DOMAINS: Final = ("lock", "alarm_control_panel")
+FORBIDDEN_COVER_CLASSES: Final = ("door", "garage")
+
+# The Home Assistant user Hermes signs in as, kept read-only on locks and
+# doors through a user group; NO_USER leaves the user's groups alone.
+CONF_HERMES_USER: Final = "hermes_user"
+NO_USER: Final = "none"
+
+ISSUE_POLICY_UNSUPPORTED: Final = "policy_unsupported"
+ISSUE_POLICY_USER_ADMIN: Final = "policy_user_admin"
+ISSUE_POLICY_USER_MISSING: Final = "policy_user_missing"

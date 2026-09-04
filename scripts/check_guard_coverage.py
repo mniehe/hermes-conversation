@@ -8,31 +8,37 @@ import json
 import sys
 from pathlib import Path
 
-GUARDED = "custom_components/hermes_conversation/llm.py"
+GUARDED = (
+    "custom_components/hermes_conversation/llm.py",
+    "custom_components/hermes_conversation/policy.py",
+)
 REQUIRED_PERCENT = 100
 
 
 def main() -> int:
-    """Return a non-zero exit code when the guard is under-covered."""
+    """Return a non-zero exit code when any guarded file is under-covered."""
     report = json.loads(Path("coverage.json").read_text())
     files = report["files"]
+    return max(_check(files, path) for path in GUARDED)
 
-    if GUARDED not in files:
-        print(f"{GUARDED} was not measured", file=sys.stderr)
+
+def _check(files: dict, path: str) -> int:
+    if path not in files:
+        print(f"{path} was not measured", file=sys.stderr)
         return 1
 
-    summary = files[GUARDED]["summary"]
+    summary = files[path]["summary"]
     percent = summary["percent_covered"]
     if percent < REQUIRED_PERCENT:
-        missing = files[GUARDED]["missing_lines"]
+        missing = files[path]["missing_lines"]
         print(
-            f"{GUARDED} is {percent:.1f}% covered, needs {REQUIRED_PERCENT}%. "
+            f"{path} is {percent:.1f}% covered, needs {REQUIRED_PERCENT}%. "
             f"Uncovered lines: {missing}",
             file=sys.stderr,
         )
         return 1
 
-    print(f"{GUARDED}: {percent:.0f}% covered")
+    print(f"{path}: {percent:.0f}% covered")
     return 0
 
 

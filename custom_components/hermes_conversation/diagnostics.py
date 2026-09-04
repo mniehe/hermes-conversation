@@ -8,10 +8,11 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.const import CONF_LLM_HASS_API
 from homeassistant.core import HomeAssistant
 
-from . import HermesConfigEntry
+from . import DATA_GROUP, HermesConfigEntry
 from .client import HermesError
-from .const import CONF_API_KEY
+from .const import CONF_API_KEY, CONF_HERMES_USER, NO_USER
 from .llm import MCP_SERVER_DOMAIN, mcp_entry_is_restricted
+from .policy import forbidden_covers
 
 TO_REDACT = {CONF_API_KEY}
 
@@ -35,6 +36,19 @@ async def async_get_config_entry_diagnostics(
         ],
         "hermes": await _async_gateway_info(entry),
         "mcp_server": _mcp_server_info(hass),
+        "policy": _policy_info(hass, entry),
+    }
+
+
+def _policy_info(hass: HomeAssistant, entry: HermesConfigEntry) -> dict[str, Any]:
+    """Report whether the user-group policy is in force for this entry's user."""
+    group = hass.data[DATA_GROUP]
+    user_id = entry.options.get(CONF_HERMES_USER, NO_USER)
+    return {
+        "supported": group.supported,
+        "group_present": group.get() is not None,
+        "user_managed": user_id != NO_USER,
+        "forbidden_covers": forbidden_covers(hass),
     }
 
 

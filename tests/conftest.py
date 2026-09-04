@@ -48,10 +48,12 @@ def load_entry(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> Entr
     async def _load(
         agent_options: dict[str, Any] | None = None,
         agent_title: str = "Hermes",
+        options: dict[str, Any] | None = None,
     ) -> MockConfigEntry:
         entry = MockConfigEntry(
             domain=DOMAIN,
             data=ENTRY_DATA,
+            options=options or {},
             unique_id=f"{BASE_URL}#{PROFILE}",
             title=f"Hermes {PROFILE}",
             subentries_data=[

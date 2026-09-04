@@ -107,6 +107,32 @@
     "profile_ignored": {
       "title": "Hermes is ignoring the profile name",
       "description": "Hermes is not routing on the profile prefix, so requests meant for \"{profile}\" are being served by the gateway's default profile instead. Nothing fails \u2014 the agent simply answers as the wrong persona.\n\nSet `gateway.multiplex_profiles: true` in the Hermes gateway config and restart it. If you run a single-profile gateway on purpose, this warning is expected and can be ignored."
+    },
+    "policy_unsupported": {
+      "title": "Hermes user group could not be created",
+      "description": "This Home Assistant version changed the internals this integration uses to create the \"{group_name}\" user group, so locks and doors are not protected by a user policy. The tool guard still applies on the restricted MCP API.\n\nUntil this integration is updated, you can create the group by hand in .storage/auth with Home Assistant stopped; see the README."
+    },
+    "policy_user_admin": {
+      "title": "Hermes user is an administrator",
+      "description": "The user \"{user_name}\" chosen for Hermes is an administrator, so it cannot be placed in the restricted group and can control every entity, including locks.\n\nCreate a non-administrator user for Hermes and select it in the integration options."
+    },
+    "policy_user_missing": {
+      "title": "Hermes user no longer exists",
+      "description": "The Home Assistant user chosen for Hermes has been deleted. Select another user in the integration options, or choose \"Not managed\"."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Hermes user",
+        "description": "Choose the Home Assistant user Hermes signs in with. That user is moved into the \"Hermes (locks and doors withheld)\" group, which Home Assistant enforces on every route: MCP, the REST API, scripts and scenes. Choose \"Not managed\" to leave the user's groups alone.",
+        "data": {
+          "hermes_user": "Home Assistant user"
+        },
+        "data_description": {
+          "hermes_user": "Only non-administrator users are listed. An administrator cannot be restricted."
+        }
+      }
     }
   }
 }

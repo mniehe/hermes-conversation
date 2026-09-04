@@ -23,19 +23,13 @@ from homeassistant.helpers import intent, llm
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.util.json import JsonObjectType
 
-from .const import DOMAIN
+from .const import DOMAIN, FORBIDDEN_COVER_CLASSES, FORBIDDEN_DOMAINS
 from .satellites import SATELLITE_DOMAIN, SERVICE_ANNOUNCE, announce_capable
 
 _LOGGER = logging.getLogger(__name__)
 
 RESTRICTED_API_ID = f"{DOMAIN}_restricted"
 RESTRICTED_API_NAME = "Assist (locks and doors withheld)"
-
-# Whole domains the agent may never write to. Alarm panels are included even
-# though today's Assist tools cannot reach them: the boundary should already
-# hold if Home Assistant adds an arming or disarming intent later.
-FORBIDDEN_DOMAINS = ("lock", "alarm_control_panel")
-FORBIDDEN_COVER_CLASSES = ("door", "garage")
 
 # The name Home Assistant treats as "no name constraint" when matching.
 ALL_ENTITIES = "all"

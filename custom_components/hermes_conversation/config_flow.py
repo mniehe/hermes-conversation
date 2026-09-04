@@ -12,6 +12,7 @@ from homeassistant.config_entries import (
     ConfigFlow,
     ConfigFlowResult,
     ConfigSubentryFlow,
+    OptionsFlow,
     SubentryFlowResult,
 )
 from homeassistant.const import CONF_MODEL, CONF_NAME, CONF_PROMPT, CONF_TIMEOUT
@@ -20,6 +21,7 @@ from homeassistant.helpers.selector import (
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
+    SelectOptionDict,
     SelectSelector,
     SelectSelectorConfig,
     TemplateSelector,
@@ -33,6 +35,7 @@ from .client import HermesAuthError, HermesClient, HermesConnectionError, Hermes
 from .const import (
     CONF_API_KEY,
     CONF_BASE_URL,
+    CONF_HERMES_USER,
     CONF_PROFILE,
     CONF_SESSION_TIMEOUT,
     DEFAULT_BASE_URL,
@@ -46,6 +49,7 @@ from .const import (
     MAX_TIMEOUT,
     MIN_SESSION_TIMEOUT,
     MIN_TIMEOUT,
+    NO_USER,
     REQUEST_TIMEOUT,
     SUBENTRY_TYPE_CONVERSATION,
 )
@@ -100,6 +104,12 @@ class HermesConversationConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> dict[str, type[ConfigSubentryFlow]]:
         """Return the subentry types this integration supports."""
         return {SUBENTRY_TYPE_CONVERSATION: HermesSubentryFlowHandler}
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        """Return the options flow: which Home Assistant user Hermes signs in as."""
+        return HermesOptionsFlow()
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -195,6 +205,37 @@ class HermesConversationConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=STEP_REAUTH_SCHEMA,
             description_placeholders={CONF_PROFILE: entry.data[CONF_PROFILE]},
             errors=errors,
+        )
+
+
+class HermesOptionsFlow(OptionsFlow):
+    """Pick the Home Assistant user whose locks and doors stay read-only."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Show the user picker."""
+        if user_input is not None:
+            return self.async_create_entry(data=user_input)
+
+        choices = [SelectOptionDict(value=NO_USER, label="Not managed")]
+        for user in await self.hass.auth.async_get_users():
+            if user.system_generated or user.is_admin or not user.is_active:
+                continue
+            choices.append(SelectOptionDict(value=user.id, label=user.name or user.id))
+
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_HERMES_USER, default=NO_USER): SelectSelector(
+                    SelectSelectorConfig(options=choices, custom_value=False)
+                )
+            }
+        )
+        return self.async_show_form(
+            step_id="init",
+            data_schema=self.add_suggested_values_to_schema(
+                schema, self.config_entry.options
+            ),
         )
 
 

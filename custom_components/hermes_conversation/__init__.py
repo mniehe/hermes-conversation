@@ -15,6 +15,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.typing import ConfigType
+from homeassistant.util.hass_dict import HassKey
 
 from .client import HermesAuthError, HermesClient, HermesConnectionError
 from .const import (
@@ -25,10 +26,13 @@ from .const import (
     ISSUE_PROFILE_IGNORED,
 )
 from .llm import MCP_SERVER_DOMAIN, async_check_mcp_server, async_register_api
+from .policy import RestrictedGroup, async_watch_entities
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = (Platform.CONVERSATION,)
+
+DATA_GROUP: HassKey[RestrictedGroup] = HassKey(f"{DOMAIN}_group")
 
 type HermesConfigEntry = ConfigEntry[HermesClient]
 
@@ -36,6 +40,8 @@ type HermesConfigEntry = ConfigEntry[HermesClient]
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up integration-wide resources."""
     async_register_api(hass)
+    group = hass.data[DATA_GROUP] = RestrictedGroup(hass)
+    async_watch_entities(hass, group)
     # Versions before per-entry routing issues used one global issue id.
     ir.async_delete_issue(hass, DOMAIN, ISSUE_PROFILE_IGNORED)
 
@@ -47,6 +53,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             ir.async_delete_issue(
                 hass, DOMAIN, f"{ISSUE_PROFILE_IGNORED}_{entry.entry_id}"
             )
+            hass.async_create_task(group.async_sync_users())
+        elif entry.domain == DOMAIN and change is ConfigEntryChange.UPDATED:
+            hass.async_create_task(group.async_sync_users())
 
     async_dispatcher_connect(hass, SIGNAL_CONFIG_ENTRY_CHANGED, _config_entry_changed)
     return True
@@ -77,6 +86,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HermesConfigEntry) -> bo
     entry.runtime_data = client
     async_check_mcp_server(hass)
     await _async_check_profile_routing(hass, client, entry)
+    await hass.data[DATA_GROUP].async_sync_users()
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 

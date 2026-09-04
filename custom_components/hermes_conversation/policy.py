@@ -17,6 +17,7 @@ from typing import Any
 from homeassistant.auth.const import GROUP_ID_USER
 from homeassistant.auth.models import Group, User
 from homeassistant.auth.permissions.const import POLICY_CONTROL, POLICY_READ
+from homeassistant.components.automation import DOMAIN as AUTOMATION_DOMAIN
 from homeassistant.components.cover import DOMAIN as COVER_DOMAIN
 from homeassistant.const import ATTR_DEVICE_CLASS, EVENT_STATE_CHANGED
 from homeassistant.core import Event, EventStateChangedData, HomeAssistant, callback
@@ -42,6 +43,11 @@ GROUP_NAME = "Hermes (locks and doors withheld)"
 READ_ONLY = {POLICY_READ: True}
 READ_AND_CONTROL = {POLICY_READ: True, POLICY_CONTROL: True}
 
+# Automations run their actions with no user attached, so Home Assistant never
+# permission-checks them; a triggerable automation would be a way around the
+# policy. Covers are granted per entity instead, to leave doors out.
+READ_ONLY_DOMAINS = (*FORBIDDEN_DOMAINS, AUTOMATION_DOMAIN, COVER_DOMAIN)
+
 
 def restricted_policy(hass: HomeAssistant) -> dict[str, Any]:
     """Grant control of everything except locks, alarm panels and door covers.
@@ -55,7 +61,7 @@ def restricted_policy(hass: HomeAssistant) -> dict[str, Any]:
     domains = {
         domain: READ_AND_CONTROL
         for domain in known_domains(hass)
-        if domain not in FORBIDDEN_DOMAINS and domain != COVER_DOMAIN
+        if domain not in READ_ONLY_DOMAINS
     }
     covers = {
         entity_id: READ_AND_CONTROL

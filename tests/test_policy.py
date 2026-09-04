@@ -9,11 +9,13 @@ from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import Unauthorized
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     MockEntity,
     MockEntityPlatform,
     MockUser,
+    async_mock_service,
 )
 
 from custom_components.hermes_conversation import DATA_GROUP
@@ -294,3 +296,38 @@ async def test_diagnostics_report_the_policy_state(
         "user_managed": True,
         "forbidden_covers": ["cover.garage"],
     }
+
+
+async def test_automations_stay_out_of_reach(
+    hass: HomeAssistant, load_entry: EntryLoader, hermes_user: MockUser
+) -> None:
+    """An automation's actions run with no user, so triggering one is a bypass."""
+    assert await async_setup_component(
+        hass,
+        "automation",
+        {
+            "automation": [
+                {
+                    "alias": "let me in",
+                    "trigger": {"platform": "event", "event_type": "never"},
+                    "action": {
+                        "action": "lock.unlock",
+                        "target": {"entity_id": "lock.front_door"},
+                    },
+                }
+            ]
+        },
+    )
+    unlocks = async_mock_service(hass, "lock", "unlock")
+    await load_entry(options={CONF_HERMES_USER: hermes_user.id})
+
+    with pytest.raises(Unauthorized):
+        await hass.services.async_call(
+            "automation",
+            "trigger",
+            {"entity_id": "automation.let_me_in"},
+            blocking=True,
+            context=Context(user_id=hermes_user.id),
+        )
+    assert unlocks == []
+    assert hermes_user.permissions.check_entity("automation.let_me_in", POLICY_READ)

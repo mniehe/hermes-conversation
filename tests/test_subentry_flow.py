@@ -11,6 +11,7 @@ from custom_components.hermes_conversation.config_flow import (
     HermesConversationConfigFlow,
 )
 from custom_components.hermes_conversation.const import (
+    CONF_SESSION_TIMEOUT,
     DOMAIN,
     SUBENTRY_TYPE_CONVERSATION,
 )
@@ -99,3 +100,28 @@ async def test_reconfigure_subentry_in_place(
     device = dr.async_get(hass).async_get_device({(DOMAIN, subentry_id)})
     assert device is not None
     assert device.name == "Evening"
+
+
+async def test_session_timeout_is_stored(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
+) -> None:
+    entry = await load_entry()
+    subentry_id = next(iter(entry.subentries))
+
+    result = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, SUBENTRY_TYPE_CONVERSATION),
+        context={"source": "reconfigure", "subentry_id": subentry_id},
+    )
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"],
+        {
+            CONF_NAME: "Hermes",
+            CONF_MODEL: "hermes-agent",
+            CONF_TIMEOUT: 120,
+            CONF_SESSION_TIMEOUT: 15,
+        },
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert entry.subentries[subentry_id].data[CONF_SESSION_TIMEOUT] == 15

@@ -30,3 +30,14 @@ ISSUE_PROFILE_IGNORED: Final = "profile_ignored"
 
 MIN_TIMEOUT: Final = 10
 MAX_TIMEOUT: Final = 300
+
+SESSION_ID_HEADER: Final = "X-Hermes-Session-Id"
+
+# Minutes a satellite may stay quiet before its next request starts a fresh
+# Hermes session. 0 disables continuity: every turn is a new session and the
+# Home Assistant chat log is replayed in the request instead.
+CONF_SESSION_TIMEOUT: Final = "session_timeout"
+DEFAULT_SESSION_TIMEOUT: Final = 5
+MIN_SESSION_TIMEOUT: Final = 0
+MAX_SESSION_TIMEOUT: Final = 1440
+SECONDS_PER_MINUTE: Final = 60

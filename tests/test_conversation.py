@@ -8,6 +8,7 @@ import pytest
 from homeassistant.components import conversation
 from homeassistant.const import CONF_MODEL, CONF_PROMPT, CONF_TIMEOUT
 from homeassistant.core import Context, HomeAssistant
+from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import intent
@@ -252,9 +253,9 @@ async def test_configured_timeout_is_applied(
     captured: list[int] = []
     original = HermesClient.async_stream_chat
 
-    def _spy(self, model, messages, timeout=None):
+    def _spy(self, model, messages, timeout=None, session_id=None):
         captured.append(timeout)
-        return original(self, model, messages, timeout=timeout)
+        return original(self, model, messages, timeout=timeout, session_id=session_id)
 
     aioclient_mock.post(COMPLETIONS_URL, content=_reply("ok"))
     with patch.object(HermesClient, "async_stream_chat", _spy):
@@ -274,3 +275,85 @@ async def test_failures_name_the_profile_in_logs(
 
     warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert any(PROFILE in r.getMessage() for r in warnings)
+
+
+async def test_prompt_receives_satellite(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
+) -> None:
+    """The agent must know which satellite spoke so it can answer there."""
+    area = ar.async_get(hass).async_create("Kitchen")
+    registry = er.async_get(hass)
+    satellite = registry.async_get_or_create(
+        "assist_satellite", "test", "kitchen-sat", suggested_object_id="kitchen"
+    )
+    registry.async_update_entity(satellite.entity_id, area_id=area.id)
+    hass.states.async_set(
+        satellite.entity_id, "idle", {"friendly_name": "Kitchen Satellite"}
+    )
+    entry = await load_entry(
+        {CONF_PROMPT: "{{ satellite_id }} / {{ satellite_name }} / {{ area_name }}"}
+    )
+    aioclient_mock.post(COMPLETIONS_URL, content=_reply("ok"))
+
+    await conversation.async_converse(
+        hass,
+        "hello",
+        None,
+        Context(),
+        agent_id=_entity_id(hass, entry),
+        satellite_id=satellite.entity_id,
+    )
+
+    messages = aioclient_mock.mock_calls[-1][2]["messages"]
+    assert messages[0]["content"] == (
+        "assist_satellite.kitchen / Kitchen Satellite / Kitchen"
+    )
+
+
+async def test_prompt_satellite_area_comes_from_device(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
+) -> None:
+    area = ar.async_get(hass).async_create("Office")
+    satellite_entry = MockConfigEntry(domain="test")
+    satellite_entry.add_to_hass(hass)
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=satellite_entry.entry_id,
+        identifiers={("test", "office-sat")},
+    )
+    dr.async_get(hass).async_update_device(device.id, area_id=area.id)
+    satellite = er.async_get(hass).async_get_or_create(
+        "assist_satellite",
+        "test",
+        "office-sat",
+        suggested_object_id="office",
+        device_id=device.id,
+    )
+    entry = await load_entry({CONF_PROMPT: "{{ area_name }}"})
+    aioclient_mock.post(COMPLETIONS_URL, content=_reply("ok"))
+
+    await conversation.async_converse(
+        hass,
+        "hello",
+        None,
+        Context(),
+        agent_id=_entity_id(hass, entry),
+        satellite_id=satellite.entity_id,
+    )
+
+    assert aioclient_mock.mock_calls[-1][2]["messages"][0]["content"] == "Office"
+
+
+async def test_prompt_without_satellite_renders_blank(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
+) -> None:
+    entry = await load_entry(
+        {CONF_PROMPT: "[{{ satellite_id }}][{{ satellite_name }}][{{ area_name }}]"}
+    )
+    aioclient_mock.post(COMPLETIONS_URL, content=_reply("ok"))
+
+    await _converse(hass, "hello", _entity_id(hass, entry))
+
+    assert (
+        aioclient_mock.mock_calls[-1][2]["messages"][0]["content"]
+        == "[None][None][None]"
+    )

@@ -34,12 +34,16 @@ from .const import (
     CONF_API_KEY,
     CONF_BASE_URL,
     CONF_PROFILE,
+    CONF_SESSION_TIMEOUT,
     DEFAULT_BASE_URL,
     DEFAULT_CONVERSATION_NAME,
     DEFAULT_MODEL,
     DEFAULT_PROFILE,
+    DEFAULT_SESSION_TIMEOUT,
     DOMAIN,
+    MAX_SESSION_TIMEOUT,
     MAX_TIMEOUT,
+    MIN_SESSION_TIMEOUT,
     MIN_TIMEOUT,
     REQUEST_TIMEOUT,
     SUBENTRY_TYPE_CONVERSATION,
@@ -259,6 +263,16 @@ class HermesSubentryFlowHandler(ConfigSubentryFlow):
                 vol.Required(CONF_TIMEOUT, default=REQUEST_TIMEOUT): NumberSelector(
                     NumberSelectorConfig(
                         min=MIN_TIMEOUT, max=MAX_TIMEOUT, mode=NumberSelectorMode.BOX
+                    )
+                ),
+                vol.Required(
+                    CONF_SESSION_TIMEOUT, default=DEFAULT_SESSION_TIMEOUT
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=MIN_SESSION_TIMEOUT,
+                        max=MAX_SESSION_TIMEOUT,
+                        mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="min",
                     )
                 ),
             }

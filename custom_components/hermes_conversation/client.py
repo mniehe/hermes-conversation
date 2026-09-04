@@ -13,7 +13,7 @@ import aiohttp
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import REQUEST_TIMEOUT, VALIDATE_TIMEOUT
+from .const import REQUEST_TIMEOUT, SESSION_ID_HEADER, VALIDATE_TIMEOUT
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -105,19 +105,33 @@ class HermesClient:
         model: str,
         messages: list[dict[str, str]],
         timeout: int = REQUEST_TIMEOUT,
+        session_id: str | None = None,
     ) -> AsyncIterator[str]:
-        """Yield reply fragments as Hermes produces them."""
+        """Yield reply fragments as Hermes produces them.
+
+        With ``session_id`` set, Hermes continues that session from its own
+        store and ignores any history in ``messages``; only the system prompt
+        and the newest user message matter.
+        """
         body = {"model": model, "messages": messages, "stream": True}
+        headers = self._headers
+        if session_id:
+            headers = {**headers, SESSION_ID_HEADER: session_id}
 
         try:
             async with asyncio.timeout(timeout):
                 async with self._session.post(
                     f"{self.profile_url}/chat/completions",
-                    headers=self._headers,
+                    headers=headers,
                     json=body,
                 ) as response:
                     if response.status == HTTPStatus.UNAUTHORIZED:
                         raise HermesAuthError("Hermes rejected the API key")
+                    if session_id and response.status == HTTPStatus.FORBIDDEN:
+                        raise HermesConnectionError(
+                            "Hermes refused to continue the session; "
+                            "the profile needs API_SERVER_KEY set"
+                        )
                     response.raise_for_status()
 
                     _LOGGER.debug(

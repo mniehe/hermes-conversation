@@ -53,8 +53,48 @@ You will need:
 | API key | That profile's `API_SERVER_KEY` |
 
 Each profile is its own config entry, because each authenticates with its own
-key. Under an entry you can add several agents, each with its own model, system
-prompt and timeout, and edit any of it later without re-adding anything.
+key. Under an entry you can add several agents, and edit any of them later
+without re-adding anything.
+
+#### Agent options
+
+| Option | Default | What it does |
+|---|---|---|
+| Name | `Hermes` | The entity name in Home Assistant |
+| Model | `hermes-agent` | Which model the profile should use for this agent; `hermes-agent` means the profile's own default |
+| System prompt | *(none)* | Prepended to every conversation; a template, see below |
+| Timeout | 120 s | How long to wait for a reply before giving up |
+| Session idle timeout | 5 min | How long a satellite may stay quiet before its next request starts a fresh Hermes session; `0` starts a new session on every turn |
+
+**Sessions.** Every satellite (falling back to the device, then to Home
+Assistant's own conversation) gets its own Hermes session, and consecutive
+turns continue it. Hermes then keeps the transcript itself, so each request
+carries only the new turn and the model's prompt cache stays warm. When a
+satellite has been idle longer than the session timeout, its next request
+starts over. Reloading the integration or editing the agent also starts over.
+With the timeout at `0`, Hermes is stateless and the Home Assistant chat log is
+sent with every request instead.
+
+**Prompt template variables.**
+
+| Variable | Value |
+|---|---|
+| `ha_name` | The Home Assistant location name |
+| `user_name` | The name of the user who spoke, if known |
+| `satellite_id` | The `assist_satellite` entity the request came from, e.g. `assist_satellite.kitchen` |
+| `satellite_name` | That satellite's friendly name |
+| `area_name` | The satellite's area, or its device's area |
+
+Voice requests carry the satellite; text chat from the Home Assistant UI does
+not, and the satellite variables render as `None`. A prompt like this lets
+Hermes answer or announce on the device that was spoken to:
+
+```jinja
+{% if satellite_id %}
+The user is speaking through {{ satellite_id }} ({{ satellite_name }}){% if area_name %} in the {{ area_name }}{% endif %}.
+Send any announcements to that satellite.
+{% endif %}
+```
 
 ### 2. Letting Hermes control the house
 

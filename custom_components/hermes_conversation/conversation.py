@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator
-from typing import Literal, override
+from typing import Any, Literal, override
 
 from homeassistant.components import conversation
 from homeassistant.config_entries import ConfigSubentry
 from homeassistant.const import CONF_MODEL, CONF_PROMPT, CONF_TIMEOUT, MATCH_ALL
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import area_registry as ar
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import template
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
@@ -20,14 +23,48 @@ from .client import HermesAuthError, HermesConnectionError
 from .const import (
     CONF_BASE_URL,
     CONF_PROFILE,
+    CONF_SESSION_TIMEOUT,
     DEFAULT_MODEL,
+    DEFAULT_SESSION_TIMEOUT,
     DOMAIN,
     MANUFACTURER,
     REQUEST_TIMEOUT,
+    SECONDS_PER_MINUTE,
     SUBENTRY_TYPE_CONVERSATION,
 )
+from .session import SessionTracker
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _satellite_context(hass: HomeAssistant, satellite_id: str | None) -> dict[str, Any]:
+    """Describe the satellite a request came from, for the prompt template."""
+    if not satellite_id:
+        return {"satellite_id": None, "satellite_name": None, "area_name": None}
+
+    state = hass.states.get(satellite_id)
+    return {
+        "satellite_id": satellite_id,
+        "satellite_name": state.name if state else None,
+        "area_name": _area_name(hass, satellite_id),
+    }
+
+
+def _area_name(hass: HomeAssistant, entity_id: str) -> str | None:
+    """Return the area of an entity, falling back to its device's area."""
+    entity = er.async_get(hass).async_get(entity_id)
+    if entity is None:
+        return None
+
+    area_id = entity.area_id
+    if area_id is None and entity.device_id:
+        device = dr.async_get(hass).async_get(entity.device_id)
+        area_id = device.area_id if device else None
+    if area_id is None:
+        return None
+
+    area = ar.async_get(hass).async_get_area(area_id)
+    return area.name if area else None
 
 
 async def _transform_stream(
@@ -69,6 +106,10 @@ class HermesConversationEntity(
         self.entry = entry
         self.subentry = subentry
         self._attr_unique_id = subentry.subentry_id
+        idle_minutes = float(
+            subentry.data.get(CONF_SESSION_TIMEOUT, DEFAULT_SESSION_TIMEOUT)
+        )
+        self._sessions = SessionTracker(idle_minutes * SECONDS_PER_MINUTE)
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, subentry.subentry_id)},
             name=subentry.title,
@@ -103,52 +144,35 @@ class HermesConversationEntity(
         chat_log: conversation.ChatLog,
     ) -> conversation.ConversationResult:
         """Send the transcript to Hermes and return its response."""
-        messages: list[dict[str, str]] = []
-        if prompt := self.subentry.data.get(CONF_PROMPT):
-            user_name: str | None = None
-            if user_input.context.user_id and (
-                user := await self.hass.auth.async_get_user(user_input.context.user_id)
-            ):
-                user_name = user.name
-            messages.append(
-                {
-                    "role": "system",
-                    "content": template.Template(prompt, self.hass).async_render(
-                        {
-                            "ha_name": self.hass.config.location_name,
-                            "user_name": user_name,
-                            "llm_context": user_input.as_llm_context(DOMAIN),
-                        },
-                        parse_result=False,
-                    ),
-                }
-            )
+        messages = await self._async_system_messages(user_input)
 
-        if user_input.extra_system_prompt:
-            if messages:
-                messages[0]["content"] += f"\n{user_input.extra_system_prompt}"
-            else:
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": user_input.extra_system_prompt,
-                    }
+        # Hermes keeps the transcript itself while a session is live, so the
+        # request carries only the newest turn. Without continuity Hermes is
+        # stateless and the chat log is replayed instead.
+        session_id: str | None = None
+        if self._sessions.enabled:
+            session_id = self._sessions.session_for(
+                user_input.satellite_id
+                or user_input.device_id
+                or chat_log.conversation_id
+            )
+            messages.append({"role": "user", "content": user_input.text})
+        else:
+            messages += [
+                {"role": content.role, "content": content.content}
+                for content in chat_log.content
+                if isinstance(
+                    content, conversation.UserContent | conversation.AssistantContent
                 )
-
-        messages += [
-            {"role": content.role, "content": content.content}
-            for content in chat_log.content
-            if isinstance(
-                content, conversation.UserContent | conversation.AssistantContent
-            )
-            and content.content
-        ]
+                and content.content
+            ]
 
         options = self.subentry.data
         stream = self.entry.runtime_data.async_stream_chat(
             options.get(CONF_MODEL, DEFAULT_MODEL),
             messages,
             timeout=int(options.get(CONF_TIMEOUT, REQUEST_TIMEOUT)),
+            session_id=session_id,
         )
 
         try:
@@ -190,3 +214,42 @@ class HermesConversationEntity(
             )
 
         return conversation.async_get_result_from_chat_log(user_input, chat_log)
+
+    async def _async_system_messages(
+        self, user_input: conversation.ConversationInput
+    ) -> list[dict[str, str]]:
+        """Render the configured prompt and any extra prompt from the pipeline."""
+        messages: list[dict[str, str]] = []
+        if prompt := self.subentry.data.get(CONF_PROMPT):
+            user_name: str | None = None
+            if user_input.context.user_id and (
+                user := await self.hass.auth.async_get_user(user_input.context.user_id)
+            ):
+                user_name = user.name
+            messages.append(
+                {
+                    "role": "system",
+                    "content": template.Template(prompt, self.hass).async_render(
+                        {
+                            "ha_name": self.hass.config.location_name,
+                            "user_name": user_name,
+                            "llm_context": user_input.as_llm_context(DOMAIN),
+                            **_satellite_context(self.hass, user_input.satellite_id),
+                        },
+                        parse_result=False,
+                    ),
+                }
+            )
+
+        if user_input.extra_system_prompt:
+            if messages:
+                messages[0]["content"] += f"\n{user_input.extra_system_prompt}"
+            else:
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": user_input.extra_system_prompt,
+                    }
+                )
+
+        return messages

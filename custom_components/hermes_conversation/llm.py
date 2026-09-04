@@ -47,8 +47,11 @@ GUARD_PROMPT = (
 )
 
 REFUSAL = (
-    "Refused: this would act on a lock or a door, which is not permitted. "
-    "Target something else, or name a specific entity."
+    "Refused: this would act on a lock or a door. Locks, doors and garage "
+    "doors are never controllable; report their state instead."
+)
+UNKNOWN_ARGUMENT_REFUSAL = (
+    "Refused: the guard does not recognise the argument(s) {names}. Retry without them."
 )
 
 # Slots that steer which entities an intent resolves to.
@@ -81,8 +84,15 @@ NON_TARGET_SLOTS = (
     "start_minutes",
     "start_seconds",
     "conversation_command",
+    "calendar",
+    "range",
 )
-READ_ONLY_TOOLS = ("GetLiveContext", "GetDateTime", "todo_get_items")
+READ_ONLY_TOOLS = (
+    "GetLiveContext",
+    "GetDateTime",
+    "todo_get_items",
+    "calendar_get_events",
+)
 
 ANNOUNCE_TOOL = "announce"
 ANNOUNCE_DESCRIPTION = (
@@ -247,9 +257,23 @@ class GuardedTool(llm.Tool):
         llm_context: llm.LLMContext,
     ) -> JsonObjectType:
         """Refuse calls that would reach a lock or a door."""
-        if self.name not in READ_ONLY_TOOLS and _targets_forbidden(
-            hass, tool_input.tool_args, llm_context.assistant
-        ):
+        if self._selects_no_targets():
+            return await self._tool.async_call(hass, tool_input, llm_context)
+
+        if unknown := _unknown_arguments(tool_input.tool_args):
+            _LOGGER.warning(
+                "Refused %s from %s: unclassified argument(s) %s",
+                tool_input.tool_name,
+                llm_context.platform,
+                sorted(unknown),
+            )
+            return {
+                "error": UNKNOWN_ARGUMENT_REFUSAL.format(
+                    names=", ".join(sorted(unknown))
+                )
+            }
+
+        if _targets_forbidden(hass, tool_input.tool_args, llm_context.assistant):
             _LOGGER.warning(
                 "Refused %s from %s: the target resolves to a lock or door (%s)",
                 tool_input.tool_name,
@@ -259,6 +283,24 @@ class GuardedTool(llm.Tool):
             return {"error": REFUSAL}
 
         return await self._tool.async_call(hass, tool_input, llm_context)
+
+    def _selects_no_targets(self) -> bool:
+        """Read-only tools and script tools never choose which entity to act on.
+
+        A script tool runs one fixed script with whatever fields that script
+        declares; its arguments are values, never targets. What the script
+        does is outside this guard's reach either way.
+        """
+        return self.name in READ_ONLY_TOOLS or isinstance(self._tool, llm.ActionTool)
+
+
+def _unknown_arguments(tool_args: dict[str, Any]) -> set[str]:
+    """Arguments the guard has not classified as a target or a value.
+
+    They may be target selectors added by a future Assist intent, and cannot
+    be allowed to become an accidental boundary bypass.
+    """
+    return set(tool_args) - set(TARGET_SLOTS) - set(NON_TARGET_SLOTS)
 
 
 def _targets_forbidden(
@@ -271,9 +313,7 @@ def _targets_forbidden(
     it for the real handler, so the guard sees the same entities the intent
     would act on, including the ones a broad sweep pulls in.
     """
-    if set(tool_args) - set(TARGET_SLOTS) - set(NON_TARGET_SLOTS):
-        # Unknown arguments may be target selectors added by a future Assist
-        # intent. They cannot become an accidental boundary bypass.
+    if _unknown_arguments(tool_args):
         return True
     if not any(slot in tool_args for slot in TARGET_SLOTS):
         return False

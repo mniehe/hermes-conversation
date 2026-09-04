@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
 from homeassistant.const import ATTR_DEVICE_CLASS, ATTR_FRIENDLY_NAME
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, SupportsResponse
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import intent, llm
@@ -16,6 +16,7 @@ from pytest_homeassistant_custom_component.common import async_mock_service
 from custom_components.hermes_conversation.llm import (
     ANNOUNCE_TOOL,
     RESTRICTED_API_ID,
+    GuardedTool,
     _targets_forbidden,
 )
 
@@ -362,3 +363,74 @@ async def test_name_all_over_safe_entities_is_allowed(
 
     assert not _refused(result)
     assert len(calls["light.turn_off"]) == 2
+
+
+class _Recorder(llm.Tool):
+    """Stands in for a wrapped Assist tool; records whether it was reached."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.calls: list[dict] = []
+
+    async def async_call(self, hass, tool_input, llm_context) -> dict:
+        self.calls.append(tool_input.tool_args)
+        return {"success": True}
+
+
+def _context() -> llm.LLMContext:
+    return llm.LLMContext(
+        platform="hermes_conversation",
+        context=None,
+        language="en",
+        assistant=ASSISTANT,
+        device_id=None,
+    )
+
+
+async def test_calendar_query_is_read_only(hass: HomeAssistant, house) -> None:
+    """A read-only tool with its own argument names must not be refused."""
+    inner = _Recorder("calendar_get_events")
+    guarded = GuardedTool(inner)
+
+    result = await guarded.async_call(
+        hass,
+        llm.ToolInput(
+            tool_name=inner.name, tool_args={"calendar": "Home", "range": "week"}
+        ),
+        _context(),
+    )
+
+    assert not _refused(result)
+    assert inner.calls == [{"calendar": "Home", "range": "week"}]
+
+
+async def test_script_tool_fields_are_not_targets(hass: HomeAssistant, house) -> None:
+    """Script tools take whatever fields the script declares; none select entities."""
+    runs: list[dict] = []
+    hass.services.async_register(
+        "script",
+        "party_mode",
+        lambda call: runs.append(dict(call.data)) or {},
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    guarded = GuardedTool(llm.ActionTool(hass, "script", "party_mode"))
+
+    result = await guarded.async_call(
+        hass,
+        llm.ToolInput(
+            tool_name="party_mode", tool_args={"duration": 5, "colour": "red"}
+        ),
+        _context(),
+    )
+
+    assert not _refused(result)
+    assert len(runs) == 1
+
+
+async def test_unknown_argument_refusal_names_it(hass: HomeAssistant, house) -> None:
+    """The model gets told which argument to drop, not a lock-and-door message."""
+    result = await _call(hass, "HassTurnOff", name="kitchen light", velocity=3)
+
+    assert _refused(result)
+    assert "velocity" in result["error"]
+    assert "lock" not in result["error"]

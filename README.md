@@ -169,10 +169,13 @@ Long-lived tokens do not expire, so treat it like a password: put it straight
 into your secret store and don't paste it into a shell that keeps history. If it
 leaks, delete it from this same screen and the agent loses access at once.
 
-> A non-admin account is defence in depth and the audit trail — it is **not** the
-> lock boundary. Home Assistant's per-user permissions are too coarse to express
-> "everything except unlocking". What actually stops the agent opening your front
-> door is the restricted API in step **c** below.
+> A non-admin account is the audit trail and keeps the agent out of Home
+> Assistant's admin surfaces. It is **not** a lock boundary on its own: a
+> non-admin user may control every entity, so this token can unlock a door
+> through a plain REST service call, and Home Assistant also serves the
+> unrestricted Assist API to any user at `/api/mcp/assist`. The restricted API
+> in step **c** only guards what arrives through it. See
+> [What the agent cannot do](#what-the-agent-cannot-do) for the exact scope.
 
 **c. Add the MCP server.** *Settings → Devices & Services → Add Integration →
 Model Context Protocol Server*. When it asks which API to expose, choose
@@ -223,27 +226,55 @@ there later.
 
 ## What the agent cannot do
 
-Writes to **locks**, **door and garage covers**, and **alarm panels** are
-refused. This is not configurable — changing it is a code change and a release,
-which is the right amount of friction for a front door.
+Through the restricted API, writes to **locks**, **door and garage covers**,
+and **alarm panels** are refused. This is not configurable — changing it is a
+code change and a release, which is the right amount of friction for a front
+door.
 
 Home Assistant uses one tool for opposite intentions: its own prompt says *"Use
 HassTurnOn to lock and HassTurnOff to unlock a lock"*. Unlocking a door is
 therefore the same call as switching off a lamp, so withholding tools by name
-cannot separate them. Instead every call is resolved to its **targets** using
-Home Assistant's own matcher, and refused if any is off limits — even when the
-model never mentioned a lock. A command broad enough to sweep one in ("turn off
-everything in the hallway") is refused rather than partly executed.
+cannot separate them. Instead every call is matched to its **targets** exactly
+as Home Assistant's own handler would match it, and refused if any target is
+off limits — even when the model never mentioned a lock. A command broad enough
+to sweep one in ("turn off everything in the hallway", or a name of "all") is
+refused rather than partly executed.
 
 Reading is unaffected. "Is the front door locked?" still answers.
 
 The guard fails closed. Every argument an Assist tool accepts is classified as
-either a target (area, floor, device, entity, domain, device class) or a value
+either a target (name, area, floor, domain, device class) or a value
 (brightness, colour, list item, and so on). A call carrying an argument the
-guard has never seen is refused rather than guessed at, so a Home Assistant
-upgrade that adds a new slot shows up as a refused call until this integration
-learns it. The test suite enumerates every registered intent to catch that
-before release.
+guard has never seen is refused with an error naming the argument, so a Home
+Assistant upgrade that adds a new slot shows up as a refusal until this
+integration learns it. The test suite walks the parameters of every tool the
+Assist API assembles to catch that before release.
+
+### What it does not cover
+
+Be precise about the boundary, because it is narrower than "Hermes cannot open
+the door":
+
+- **Scripts, scenes and automations run unguarded.** An exposed script is both
+  reachable through `HassTurnOn` and offered as its own tool, and what it does
+  inside is invisible to the guard. A script that unlocks the door will unlock
+  the door. Do not expose one.
+- **The token is not scoped.** A non-admin Home Assistant user may control
+  every entity, exposed or not, so the same bearer token can unlock a lock
+  through a REST service call, and Home Assistant serves the unrestricted
+  Assist API to any user at `/api/mcp/assist`. The guard only sees calls that
+  arrive through the restricted API you selected in the MCP server. Hermes
+  profiles with shell or code-execution tools hold that token in their
+  environment.
+- **Unexposing the locks** closes both MCP routes and the conversation API,
+  because Assist tools only see exposed entities. It does not close the REST
+  route, and it also stops "is the front door locked?" from answering.
+
+Home Assistant's own permission system can close every route at once with a
+user-group policy on the Hermes user that grants read-only access to locks,
+alarm panels and door covers. Home Assistant has no UI for custom groups;
+support for creating and maintaining that group from this integration is the
+next planned change.
 
 ## Checking it works
 

@@ -1,6 +1,39 @@
 # hermes_conversation — Design
 
-Status: **Phase 0, awaiting approval.** No implementation code written.
+Status: **historical.** This is the pre-implementation design, kept for the
+reasoning and citations. Where the shipped code differs, the README is right
+and this file is not; the known differences are listed in
+[§0](#0-where-the-implementation-diverged) so the rest can be read with them
+in mind.
+
+## 0. Where the implementation diverged
+
+- **The guard is not the lock boundary for the token.** A non-admin user
+  controls every entity through the REST API, and HA serves the unrestricted
+  Assist API at `/api/mcp/assist` to any user, so layers 1 and 2 below only
+  cover calls made through the restricted API. Scripts and scenes run
+  unguarded. The README states the real scope; a user-group policy on the
+  Hermes user is the planned fix.
+- **No exposure repair issue.** The "lock is exposed" repair in §3 was never
+  built. The two repairs that exist are `mcp_server_unrestricted` and
+  `profile_ignored`.
+- **Alarm panels are refused as a whole domain**, not just `alarm_disarm`.
+- **Targets are matched once, the way HA's own handler matches them**, with a
+  name of "all" meaning no name, then checked against the forbidden set.
+- **Runtime 401 does not raise `ConfigEntryAuthFailed`.** `async_converse`
+  would swallow it; the entity starts reauth itself and raises a translated
+  `HomeAssistantError`.
+- **Model is a fixed list** (`custom_value=False`) of what the profile
+  advertises, defaulting to the first entry; the prompt default is the
+  integration's own voice prompt, and there is a `session_timeout` option.
+- **`async_provide_llm_data` is not used.** The prompt is rendered directly.
+- **Extra modules:** `session.py` (per-origin Hermes sessions) and
+  `satellites.py` (announce-capable satellites and areas); there is no
+  `entity.py`. Workflows are `validate.yml`, `lint.yml`, `test.yml`.
+- **Toolchain:** Python 3.14, tests use `aioclient_mock` rather than
+  `aioresponses`.
+- **§9 step 5 is optional**, not required; leaving locks exposed keeps state
+  reads working and relies on layer 2 for the MCP path.
 
 Verified against:
 

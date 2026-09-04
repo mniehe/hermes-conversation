@@ -307,3 +307,8 @@ async def test_alarm_panel_is_refused(hass: HomeAssistant, load_entry, calls) ->
     result = await _call(hass, "HassTurnOff", name="house alarm")
 
     assert _refused(result)
+
+
+async def test_list_intent_arguments_pass_the_guard(hass: HomeAssistant, house) -> None:
+    """Shopping list arguments are values, not targets; the guard must pass them."""
+    assert not _targets_forbidden(hass, {"item": "milk", "name": "Shopping"}, ASSISTANT)

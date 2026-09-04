@@ -56,9 +56,27 @@ NON_TARGET_SLOTS = (
     "brightness",
     "percentage",
     "volume_level",
+    "volume_step",
     "is_volume_muted",
+    "mode",
+    "humidity",
+    "state",
+    "media_class",
+    "search_query",
+    "item",
+    "todo_list",
+    "status",
+    "message",
+    "response",
+    "hours",
+    "minutes",
+    "seconds",
+    "start_hours",
+    "start_minutes",
+    "start_seconds",
+    "conversation_command",
 )
-READ_ONLY_TOOLS = ("GetLiveContext", "GetDateTime")
+READ_ONLY_TOOLS = ("GetLiveContext", "GetDateTime", "todo_get_items")
 
 MCP_SERVER_DOMAIN = "mcp_server"
 ISSUE_UNRESTRICTED_MCP = "mcp_server_unrestricted"

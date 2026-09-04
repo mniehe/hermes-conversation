@@ -39,6 +39,7 @@ from .const import (
     DEFAULT_CONVERSATION_NAME,
     DEFAULT_MODEL,
     DEFAULT_PROFILE,
+    DEFAULT_PROMPT,
     DEFAULT_SESSION_TIMEOUT,
     DOMAIN,
     MAX_SESSION_TIMEOUT,
@@ -122,7 +123,7 @@ class HermesConversationConfigFlow(ConfigFlow, domain=DOMAIN):
                     subentries=[
                         {
                             "subentry_type": SUBENTRY_TYPE_CONVERSATION,
-                            "data": {},
+                            "data": {CONF_PROMPT: DEFAULT_PROMPT},
                             "title": DEFAULT_CONVERSATION_NAME,
                             "unique_id": None,
                         }
@@ -259,7 +260,7 @@ class HermesSubentryFlowHandler(ConfigSubentryFlow):
                         options=models or [DEFAULT_MODEL], custom_value=True
                     )
                 ),
-                vol.Optional(CONF_PROMPT): TemplateSelector(),
+                vol.Optional(CONF_PROMPT, default=DEFAULT_PROMPT): TemplateSelector(),
                 vol.Required(CONF_TIMEOUT, default=REQUEST_TIMEOUT): NumberSelector(
                     NumberSelectorConfig(
                         min=MIN_TIMEOUT, max=MAX_TIMEOUT, mode=NumberSelectorMode.BOX

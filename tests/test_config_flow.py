@@ -4,6 +4,7 @@ from http import HTTPStatus
 
 import pytest
 from homeassistant.config_entries import SOURCE_REAUTH, SOURCE_RECONFIGURE, SOURCE_USER
+from homeassistant.const import CONF_PROMPT
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -14,6 +15,7 @@ from custom_components.hermes_conversation.const import (
     CONF_API_KEY,
     CONF_BASE_URL,
     CONF_PROFILE,
+    DEFAULT_PROMPT,
     DOMAIN,
 )
 
@@ -40,6 +42,10 @@ async def test_user_flow_creates_entry(
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"] == USER_INPUT
     assert PROFILE in result["title"]
+
+    entry = hass.config_entries.async_entries(DOMAIN)[0]
+    agent = next(iter(entry.subentries.values()))
+    assert agent.data[CONF_PROMPT] == DEFAULT_PROMPT
 
 
 async def test_trailing_slash_is_stripped(

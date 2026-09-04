@@ -12,6 +12,7 @@ from custom_components.hermes_conversation.config_flow import (
 )
 from custom_components.hermes_conversation.const import (
     CONF_SESSION_TIMEOUT,
+    DEFAULT_PROMPT,
     DOMAIN,
     SUBENTRY_TYPE_CONVERSATION,
 )
@@ -125,3 +126,18 @@ async def test_session_timeout_is_stored(
 
     assert result["type"] is FlowResultType.ABORT
     assert entry.subentries[subentry_id].data[CONF_SESSION_TIMEOUT] == 15
+
+
+async def test_new_agent_form_suggests_default_prompt(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
+) -> None:
+    """A worked example beats an empty box for someone's first agent."""
+    entry = await load_entry()
+
+    result = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, SUBENTRY_TYPE_CONVERSATION), context={"source": "user"}
+    )
+
+    schema = result["data_schema"].schema
+    prompt_field = next(key for key in schema if str(key) == CONF_PROMPT)
+    assert prompt_field.default() == DEFAULT_PROMPT

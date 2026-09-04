@@ -62,7 +62,7 @@ without re-adding anything.
 |---|---|---|
 | Name | `Hermes` | The entity name in Home Assistant |
 | Model | `hermes-agent` | Which model the profile should use for this agent; `hermes-agent` means the profile's own default |
-| System prompt | *(none)* | Prepended to every conversation; a template, see below |
+| System prompt | *(voice example below)* | Prepended to every conversation; a template, see below |
 | Timeout | 120 s | How long to wait for a reply before giving up |
 | Session idle timeout | 5 min | How long a satellite may stay quiet before its next request starts a fresh Hermes session; `0` starts a new session on every turn |
 
@@ -86,14 +86,15 @@ sent with every request instead.
 | `area_name` | The satellite's area, or its device's area |
 
 Voice requests carry the satellite; text chat from the Home Assistant UI does
-not, and the satellite variables render as `None`. A prompt like this lets
-Hermes answer or announce on the device that was spoken to:
+not, and the satellite variables render as `None`. New agents start with this
+prompt, which keeps spoken replies short and tells Hermes which satellite and
+room the request came from:
 
 ```jinja
-{% if satellite_id %}
-The user is speaking through {{ satellite_id }} ({{ satellite_name }}){% if area_name %} in the {{ area_name }}{% endif %}.
-Send any announcements to that satellite.
-{% endif %}
+You are the voice of the house at {{ ha_name }}. Your reply is spoken aloud, so answer in one or two short plain sentences with no lists, markdown, or emoji. Do not narrate what you are doing.
+{% if user_name %}You are talking to {{ user_name }}.{% endif %}
+{% if satellite_id %}The request came from {{ satellite_name or satellite_id }}{% if area_name %} in the {{ area_name }}{% endif %}. When a command names no room, assume the {{ area_name or "same" }} area. Send any announcements to {{ satellite_id }}.{% endif %}
+Use the Home Assistant tools to check state before answering questions about the house, and confirm briefly after acting.
 ```
 
 ### 2. Letting Hermes control the house

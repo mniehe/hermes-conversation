@@ -41,3 +41,21 @@ DEFAULT_SESSION_TIMEOUT: Final = 5
 MIN_SESSION_TIMEOUT: Final = 0
 MAX_SESSION_TIMEOUT: Final = 1440
 SECONDS_PER_MINUTE: Final = 60
+
+# Pre-filled for new agents as a worked example of the template variables;
+# spoken replies need different manners from typed ones.
+DEFAULT_PROMPT: Final = "\n".join(
+    (
+        "You are the voice of the house at {{ ha_name }}. Your reply is spoken "
+        "aloud, so answer in one or two short plain sentences with no lists, "
+        "markdown, or emoji. Do not narrate what you are doing.",
+        "{% if user_name %}You are talking to {{ user_name }}.{% endif %}",
+        "{% if satellite_id %}The request came from "
+        "{{ satellite_name or satellite_id }}"
+        "{% if area_name %} in the {{ area_name }}{% endif %}. "
+        'When a command names no room, assume the {{ area_name or "same" }} area. '
+        "Send any announcements to {{ satellite_id }}.{% endif %}",
+        "Use the Home Assistant tools to check state before answering questions "
+        "about the house, and confirm briefly after acting.",
+    )
+)

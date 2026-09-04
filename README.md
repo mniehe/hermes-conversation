@@ -61,10 +61,34 @@ without re-adding anything.
 | Option | Default | What it does |
 |---|---|---|
 | Name | `Hermes` | The entity name in Home Assistant |
-| Model | `hermes-agent` | Which model the profile should use for this agent; `hermes-agent` means the profile's own default |
+| Model | `hermes-agent` | Which of the profile's advertised models this agent uses; `hermes-agent` means the profile's own default, see below |
 | System prompt | *(voice example below)* | Prepended to every conversation; a template, see below |
 | Timeout | 120 s | How long to wait for a reply before giving up |
 | Session idle timeout | 5 min | How long a satellite may stay quiet before its next request starts a fresh Hermes session; `0` starts a new session on every turn |
+
+**Model choices.** The Model list is whatever the profile advertises on
+`/v1/models`, and by default that is only `hermes-agent` and the profile's own
+name, both meaning "the profile's default model". Hermes deliberately ignores
+any other model name a client sends, so the list is not free text. To offer a
+choice per agent, define aliases on the Hermes gateway; they appear in the list
+and each pins a provider and model:
+
+```yaml
+gateway:
+  api_server:
+    extra:
+      model_routes:
+        fast:
+          provider: zai
+          model: glm-5.3-flash
+        smart:
+          provider: openai-codex
+          model: gpt-5.6-terra
+```
+
+Under `gateway.multiplex_profiles` the default profile owns the API server, so
+the aliases live in its config and are shared by every profile. A routed turn
+still uses the profile's `fallback_providers` if the pinned provider fails.
 
 **Sessions.** Every satellite (falling back to the device, then to Home
 Assistant's own conversation) gets its own Hermes session, and consecutive

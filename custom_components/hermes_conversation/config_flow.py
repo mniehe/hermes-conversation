@@ -257,7 +257,7 @@ class HermesSubentryFlowHandler(ConfigSubentryFlow):
             {
                 vol.Required(CONF_MODEL, default=DEFAULT_MODEL): SelectSelector(
                     SelectSelectorConfig(
-                        options=models or [DEFAULT_MODEL], custom_value=True
+                        options=models or [DEFAULT_MODEL], custom_value=False
                     )
                 ),
                 vol.Optional(CONF_PROMPT, default=DEFAULT_PROMPT): TemplateSelector(),

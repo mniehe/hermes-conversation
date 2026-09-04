@@ -99,6 +99,10 @@ starts over. Reloading the integration or editing the agent also starts over.
 With the timeout at `0`, Hermes is stateless and the Home Assistant chat log is
 sent with every request instead.
 
+The Assist dialog in the Home Assistant UI has no satellite or device, so it
+keys on the dialog's own conversation: the dialog continues one session until
+it is closed or goes idle.
+
 **Prompt template variables.**
 
 | Variable | Value |
@@ -213,6 +217,50 @@ everything in the hallway") is refused rather than partly executed.
 
 Reading is unaffected. "Is the front door locked?" still answers.
 
+The guard fails closed. Every argument an Assist tool accepts is classified as
+either a target (area, floor, device, entity, domain, device class) or a value
+(brightness, colour, list item, and so on). A call carrying an argument the
+guard has never seen is refused rather than guessed at, so a Home Assistant
+upgrade that adds a new slot shows up as a refused call until this integration
+learns it. The test suite enumerates every registered intent to catch that
+before release.
+
+## Checking it works
+
+Hermes never stores or logs the prompt a client sends — it is layered onto the
+profile's own system prompt for the duration of each turn — so the satellite
+and session details are only visible from the Home Assistant side. Turn on
+debug logging for the integration:
+
+```yaml
+logger:
+  logs:
+    custom_components.hermes_conversation: debug
+```
+
+Each turn then logs which session it joined and where it came from:
+
+```
+Hermes session ha-8e32e955… for assist_satellite.kitchen (satellite=assist_satellite.kitchen device=abc123)
+Streaming from profile home-assist with model home-assist (2 messages)
+```
+
+A satellite of `None` means the request did not come through a voice pipeline
+(the Assist dialog, an automation, a developer-tools call), and the prompt's
+satellite variables render empty for that turn.
+
+On the Hermes side, the profile's `logs/agent.log` shows the same session id
+and how much transcript Hermes loaded for it. A `history` that grows across
+turns means the session is being continued:
+
+```
+agent.turn_context: conversation turn: session=ha-8e32e955… platform=api_server history=0 msg='What is on my shopping list?'
+agent.turn_context: conversation turn: session=ha-8e32e955… platform=api_server history=4 msg='Lets mark milk complete'
+```
+
+If instead every turn is `history=0` with a new id, the satellite is idling past
+the session timeout, or the integration was reloaded between turns.
+
 ## Requirements
 
 - Home Assistant **2026.8.2** or later
@@ -228,7 +276,8 @@ Reading is unaffected. "Is the front door locked?" still answers.
 | | |
 |---|---|
 | ✅ | Streaming chat, per-profile entries, reauth and reconfigure |
-| ✅ | Agents configurable in the UI: model, system prompt, timeout |
+| ✅ | Agents configurable in the UI: model, system prompt, timeout, session timeout |
+| ✅ | Per-satellite session continuity, with the satellite and its area in the prompt |
 | ✅ | Restricted LLM API for MCP, with locks and doors withheld |
 | ✅ | Diagnostics, and repair checks for the boundary and profile routing |
 | ⬜ | `ai_task` support |

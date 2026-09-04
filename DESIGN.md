@@ -16,8 +16,8 @@ in mind.
   user group that Home Assistant enforces on every route; the README
   explains both layers.
 - **No exposure repair issue.** The "lock is exposed" repair in §3 was never
-  built. The two repairs that exist are `mcp_server_unrestricted` and
-  `profile_ignored`.
+  built. The repairs that exist are `mcp_server_unrestricted`,
+  `profile_ignored`, and the `policy_*` family for the user group.
 - **Alarm panels are refused as a whole domain**, not just `alarm_disarm`.
 - **Targets are matched once, the way HA's own handler matches them**, with a
   name of "all" meaning no name, then checked against the forbidden set.

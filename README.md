@@ -73,7 +73,9 @@ Optional. Do it when you want Hermes to switch things, not just talk.
    ```
 
 5. **Expose what Hermes may see.** *Settings → Voice assistants → Expose*.
-   Hermes only sees exposed entities.
+   The tools only see exposed entities. The token itself can still read any
+   entity's state through the REST API; exposure limits what the tools act on,
+   not what the account can read.
 6. **Pick the Hermes user.** Open the integration's *Configure* and choose the
    user from step 1. This puts it in a user group that Home Assistant itself
    keeps read-only on locks and doors. See [How the door stays shut](#how-the-door-stays-shut).
@@ -104,8 +106,9 @@ The prompt is a template with these variables:
 | `satellite_id` | The `assist_satellite` entity the request came from |
 | `satellite_name` | Its friendly name |
 | `area_name` | Its area, or its device's area |
+| `llm_context` | Home Assistant's own request context object; rarely useful in a prompt |
 
-The Assist dialog has no satellite, so those three render empty there. New
+The Assist dialog has no satellite, so the satellite variables render empty there. New
 agents start with this:
 
 ```jinja
@@ -193,25 +196,39 @@ the forbidden entities and keeps "everything else" read-only:
 
 ```
 policy:
-    domains:    every domain in the house except lock, alarm_control_panel, cover  -> read + control
-    entity_ids: every cover that is not a door or garage                          -> read + control
-    all:                                                                          -> read only
+    domains:    every domain in the house except lock, alarm_control_panel,
+                cover and automation                              -> read + control
+    entity_ids: every cover that is not a door or garage          -> read + control
+    all:                                                          -> read only
 ```
 
-It rebuilds the policy whenever an entity appears or is re-registered, and it
-moves the user you picked into that group and nobody else. Home Assistant has
-no UI for custom groups, so this uses two internal names of the auth store; if
-a future Home Assistant renames them, a repair tells you and layer 1 keeps
+Automations are withheld because their actions run with no user attached, so
+Home Assistant never permission-checks them; letting Hermes trigger one would
+be a way around the policy. Scripts and scenes carry Hermes's user and are
+checked action by action, so those stay controllable.
+
+The policy is rebuilt when a cover or a new domain appears, the user you
+picked is moved into the group and nobody else, and the group is removed
+again when no entry manages a user. If an administrator edits that user in
+Settings, the integration notices and puts it back. Home Assistant has no UI
+for custom groups, so this relies on a few internal names in the auth store;
+if a future Home Assistant renames them, a repair tells you and layer 1 keeps
 working.
 
 What is still on you:
 
 - Pick the user in the integration's options. Without that, only layer 1
-  applies.
-- The user must not be an administrator. Admins bypass every policy, and the
-  integration refuses to demote one.
-- Anything that runs without Hermes's user context, such as an automation
-  fired by an event, is outside both layers.
+  applies. Only a plain member of the Users group can be picked; admins and
+  Viewers are refused, since the move would change what they may do.
+- Remove the config entry before uninstalling the integration. Otherwise the
+  user stays in a group nobody maintains.
+- Services that don't target entities are never permission-checked by Home
+  Assistant: `shell_command`, `rest_command`, legacy `notify`, persistent
+  notifications. Don't define one that unlocks a door.
+- Only device class tells a cover from a door. A gate, a cover with no device
+  class wrapping a garage door, a door strike wired to a `switch`, an `update`
+  install or a reboot `button` are all controllable. Home Assistant's model
+  cannot express those; keep such entities unexposed or off the account.
 
 ## Checking it works
 

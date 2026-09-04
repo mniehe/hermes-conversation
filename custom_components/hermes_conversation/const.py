@@ -73,4 +73,5 @@ NO_USER: Final = "none"
 
 ISSUE_POLICY_UNSUPPORTED: Final = "policy_unsupported"
 ISSUE_POLICY_USER_ADMIN: Final = "policy_user_admin"
+ISSUE_POLICY_USER_GROUPS: Final = "policy_user_groups"
 ISSUE_POLICY_USER_MISSING: Final = "policy_user_missing"

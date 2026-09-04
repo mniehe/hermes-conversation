@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from homeassistant.auth import EVENT_USER_REMOVED, EVENT_USER_UPDATED
 from homeassistant.auth.const import GROUP_ID_USER
 from homeassistant.auth.models import Group, User
 from homeassistant.auth.permissions.const import POLICY_CONTROL, POLICY_READ
@@ -23,6 +24,7 @@ from homeassistant.const import ATTR_DEVICE_CLASS, EVENT_STATE_CHANGED
 from homeassistant.core import Event, EventStateChangedData, HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.debounce import Debouncer
 
 from .const import (
     CONF_HERMES_USER,
@@ -31,6 +33,7 @@ from .const import (
     FORBIDDEN_DOMAINS,
     ISSUE_POLICY_UNSUPPORTED,
     ISSUE_POLICY_USER_ADMIN,
+    ISSUE_POLICY_USER_GROUPS,
     ISSUE_POLICY_USER_MISSING,
     NO_USER,
 )
@@ -47,6 +50,29 @@ READ_AND_CONTROL = {POLICY_READ: True, POLICY_CONTROL: True}
 # permission-checks them; a triggerable automation would be a way around the
 # policy. Covers are granted per entity instead, to leave doors out.
 READ_ONLY_DOMAINS = (*FORBIDDEN_DOMAINS, AUTOMATION_DOMAIN, COVER_DOMAIN)
+
+USER_ISSUES = (
+    ISSUE_POLICY_USER_ADMIN,
+    ISSUE_POLICY_USER_GROUPS,
+    ISSUE_POLICY_USER_MISSING,
+)
+
+# Auth events arrive one per user and our own moves fire them too; one sync
+# shortly after the last is enough.
+USER_SYNC_COOLDOWN = 1.0
+
+
+def manageable(user: User) -> bool:
+    """Whether a user may be moved into the restricted group and back out.
+
+    Only a plain member of the Users group qualifies. Anyone else would be
+    escalated or demoted by the move: a Viewer would gain control, an
+    administrator would lose it, a member of another custom group would lose
+    that group on release.
+    """
+    if user.system_generated or user.is_admin or not user.is_active:
+        return False
+    return {group.id for group in user.groups} <= {GROUP_ID_USER, GROUP_ID}
 
 
 def restricted_policy(hass: HomeAssistant) -> dict[str, Any]:
@@ -116,6 +142,7 @@ class RestrictedGroup:
     def __init__(self, hass: HomeAssistant) -> None:
         """Bind to the auth store without touching it yet."""
         self._hass = hass
+        self.moving_user = False
 
     @property
     def supported(self) -> bool:
@@ -178,6 +205,7 @@ class RestrictedGroup:
             for entry in self._hass.config_entries.async_entries(DOMAIN)
             if (user_id := entry.options.get(CONF_HERMES_USER, NO_USER)) != NO_USER
         }
+        self._drop_stale_issues(wanted)
         group = self.ensure() if wanted else self.get()
         if group is None:
             return
@@ -192,23 +220,39 @@ class RestrictedGroup:
             if await self._hass.auth.async_get_user(user_id) is None:
                 self._issue(ISSUE_POLICY_USER_MISSING, user_id)
 
+    def _drop_stale_issues(self, wanted: set[str]) -> None:
+        registry = ir.async_get(self._hass)
+        for domain, issue_id in list(registry.issues):
+            if domain != DOMAIN:
+                continue
+            key, _, user_id = issue_id.rpartition("_")
+            if key in USER_ISSUES and user_id not in wanted:
+                ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+
     async def _async_restrict(self, user: User, group: Group) -> None:
+        for key in USER_ISSUES:
+            ir.async_delete_issue(self._hass, DOMAIN, f"{key}_{user.id}")
         if user.is_admin:
             self._issue(ISSUE_POLICY_USER_ADMIN, user.id, user_name=user.name or "")
             return
-        ir.async_delete_issue(
-            self._hass, DOMAIN, f"{ISSUE_POLICY_USER_ADMIN}_{user.id}"
-        )
-        ir.async_delete_issue(
-            self._hass, DOMAIN, f"{ISSUE_POLICY_USER_MISSING}_{user.id}"
-        )
+        if not manageable(user):
+            self._issue(ISSUE_POLICY_USER_GROUPS, user.id, user_name=user.name or "")
+            return
         if user.groups != [group]:
-            await self._hass.auth.async_update_user(user, group_ids=[group.id])
+            await self._async_move(user, group.id)
             _LOGGER.info("Moved user %s into %s", user.name, GROUP_NAME)
 
     async def _async_release(self, user: User) -> None:
-        await self._hass.auth.async_update_user(user, group_ids=[GROUP_ID_USER])
+        await self._async_move(user, GROUP_ID_USER)
         _LOGGER.info("Moved user %s back to the Users group", user.name)
+
+    async def _async_move(self, user: User, group_id: str) -> None:
+        """Change the user's group; the user-updated event this fires is ours."""
+        self.moving_user = True
+        try:
+            await self._hass.auth.async_update_user(user, group_ids=[group_id])
+        finally:
+            self.moving_user = False
 
     def _issue(self, key: str, user_id: str, **placeholders: str) -> None:
         ir.async_create_issue(
@@ -220,6 +264,30 @@ class RestrictedGroup:
             translation_key=key,
             translation_placeholders=placeholders,
         )
+
+
+@callback
+def async_watch_users(hass: HomeAssistant, group: RestrictedGroup) -> None:
+    """Re-sync when a user is edited or deleted outside this integration.
+
+    Saving the user dialog in Settings rewrites group memberships, which
+    would quietly hand the Hermes user full control until the next restart.
+    """
+    debounced = Debouncer(
+        hass,
+        _LOGGER,
+        cooldown=USER_SYNC_COOLDOWN,
+        immediate=False,
+        function=group.async_sync_users,
+    )
+
+    @callback
+    def _user_changed(_event: Event[Any]) -> None:
+        if not group.moving_user:
+            debounced.async_schedule_call()
+
+    hass.bus.async_listen(EVENT_USER_UPDATED, _user_changed)
+    hass.bus.async_listen(EVENT_USER_REMOVED, _user_changed)
 
 
 @callback

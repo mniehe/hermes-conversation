@@ -119,6 +119,10 @@
     "policy_user_missing": {
       "title": "Hermes user no longer exists",
       "description": "The Home Assistant user chosen for Hermes has been deleted. Select another user in the integration options, or choose \"Not managed\"."
+    },
+    "policy_user_groups": {
+      "title": "Hermes user belongs to other groups",
+      "description": "The user \"{user_name}\" chosen for Hermes is a member of a group other than Users, so moving it into the restricted group would change what it may do. Choose a plain user in the integration options."
     }
   },
   "options": {

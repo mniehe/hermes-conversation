@@ -1,20 +1,23 @@
 """The user-group policy: the boundary Home Assistant enforces on every route."""
 
+from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
-from homeassistant.auth.const import GROUP_ID_USER
+from homeassistant.auth.const import GROUP_ID_READ_ONLY, GROUP_ID_USER
 from homeassistant.auth.permissions.const import POLICY_CONTROL, POLICY_READ
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import Unauthorized
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.setup import async_setup_component
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     MockEntity,
     MockEntityPlatform,
     MockUser,
+    async_fire_time_changed,
     async_mock_service,
 )
 
@@ -24,6 +27,7 @@ from custom_components.hermes_conversation.const import (
     DOMAIN,
     ISSUE_POLICY_UNSUPPORTED,
     ISSUE_POLICY_USER_ADMIN,
+    ISSUE_POLICY_USER_GROUPS,
     ISSUE_POLICY_USER_MISSING,
     NO_USER,
 )
@@ -294,6 +298,9 @@ async def test_diagnostics_report_the_policy_state(
         "supported": True,
         "group_present": True,
         "user_managed": True,
+        "user_exists": True,
+        "user_is_admin": False,
+        "user_in_group": True,
         "forbidden_covers": ["cover.garage"],
     }
 
@@ -331,3 +338,81 @@ async def test_automations_stay_out_of_reach(
         )
     assert unlocks == []
     assert hermes_user.permissions.check_entity("automation.let_me_in", POLICY_READ)
+
+
+async def test_viewer_is_neither_offered_nor_escalated(
+    hass: HomeAssistant, load_entry: EntryLoader
+) -> None:
+    """Moving a read-only user into our group would hand it control of the house."""
+    viewer_group = hass.auth._store._groups[GROUP_ID_READ_ONLY]
+    viewer = MockUser(name="Viewer", groups=[viewer_group]).add_to_hass(hass)
+    entry = await load_entry(options={CONF_HERMES_USER: viewer.id})
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    offered = {
+        option["value"]
+        for option in result["data_schema"].schema[CONF_HERMES_USER].config["options"]
+    }
+
+    assert viewer.id not in offered
+    assert [group.id for group in viewer.groups] == [GROUP_ID_READ_ONLY]
+    assert ir.async_get(hass).async_get_issue(
+        DOMAIN, f"{ISSUE_POLICY_USER_GROUPS}_{viewer.id}"
+    )
+
+
+async def test_user_edited_elsewhere_is_put_back(
+    hass: HomeAssistant, load_entry: EntryLoader, hermes_user: MockUser
+) -> None:
+    """Saving the user dialog in Settings rewrites groups; we must notice."""
+    await load_entry(options={CONF_HERMES_USER: hermes_user.id})
+
+    await hass.auth.async_update_user(hermes_user, group_ids=[GROUP_ID_USER])
+    assert [group.id for group in hermes_user.groups] == [GROUP_ID_USER]
+    await _settle(hass)
+
+    assert [group.id for group in hermes_user.groups] == [GROUP_ID]
+
+
+async def test_user_deleted_elsewhere_raises_a_repair(
+    hass: HomeAssistant, load_entry: EntryLoader, hermes_user: MockUser
+) -> None:
+    await load_entry(options={CONF_HERMES_USER: hermes_user.id})
+
+    await hass.auth.async_remove_user(hermes_user)
+    await _settle(hass)
+
+    assert ir.async_get(hass).async_get_issue(
+        DOMAIN, f"{ISSUE_POLICY_USER_MISSING}_{hermes_user.id}"
+    )
+
+
+async def test_stale_user_repair_goes_when_unmanaged(
+    hass: HomeAssistant, load_entry: EntryLoader
+) -> None:
+    entry = await load_entry(options={CONF_HERMES_USER: "gone"})
+    issue_id = f"{ISSUE_POLICY_USER_MISSING}_gone"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+
+    hass.config_entries.async_update_entry(entry, options={CONF_HERMES_USER: NO_USER})
+    await hass.async_block_till_done()
+
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+
+
+async def test_options_flow_does_not_suggest_a_vanished_user(
+    hass: HomeAssistant, load_entry: EntryLoader
+) -> None:
+    entry = await load_entry(options={CONF_HERMES_USER: "gone"})
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    key = next(k for k in result["data_schema"].schema if k == CONF_HERMES_USER)
+
+    assert (key.description or {}).get("suggested_value") in (None, NO_USER)
+
+
+async def _settle(hass: HomeAssistant) -> None:
+    """Let the user-sync debouncer fire, then let its cooldown expire."""
+    for _ in range(2):
+        async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=2))
+        await hass.async_block_till_done()

@@ -26,7 +26,7 @@ from .const import (
     ISSUE_PROFILE_IGNORED,
 )
 from .llm import MCP_SERVER_DOMAIN, async_check_mcp_server, async_register_api
-from .policy import RestrictedGroup, async_watch_entities
+from .policy import RestrictedGroup, async_watch_entities, async_watch_users
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,6 +42,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     async_register_api(hass)
     group = hass.data[DATA_GROUP] = RestrictedGroup(hass)
     async_watch_entities(hass, group)
+    async_watch_users(hass, group)
     # Versions before per-entry routing issues used one global issue id.
     ir.async_delete_issue(hass, DOMAIN, ISSUE_PROFILE_IGNORED)
 

@@ -53,6 +53,7 @@ from .const import (
     REQUEST_TIMEOUT,
     SUBENTRY_TYPE_CONVERSATION,
 )
+from .policy import manageable
 
 STEP_USER_SCHEMA = vol.Schema(
     {
@@ -220,9 +221,12 @@ class HermesOptionsFlow(OptionsFlow):
 
         choices = [SelectOptionDict(value=NO_USER, label="Not managed")]
         for user in await self.hass.auth.async_get_users():
-            if user.system_generated or user.is_admin or not user.is_active:
-                continue
-            choices.append(SelectOptionDict(value=user.id, label=user.name or user.id))
+            if manageable(user):
+                choices.append(
+                    SelectOptionDict(value=user.id, label=user.name or user.id)
+                )
+        offered = {choice["value"] for choice in choices}
+        current = self.config_entry.options.get(CONF_HERMES_USER, NO_USER)
 
         schema = vol.Schema(
             {
@@ -234,7 +238,7 @@ class HermesOptionsFlow(OptionsFlow):
         return self.async_show_form(
             step_id="init",
             data_schema=self.add_suggested_values_to_schema(
-                schema, self.config_entry.options
+                schema, {CONF_HERMES_USER: current} if current in offered else {}
             ),
         )
 

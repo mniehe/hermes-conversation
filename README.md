@@ -1,77 +1,125 @@
 # Hermes Conversation
 
-A [Home Assistant][ha] conversation agent backed by a [Hermes][hermes] profile.
+Talk to a [Hermes][hermes] agent from [Home Assistant][ha], and let Hermes run
+your house from any channel it has, with the front door kept out of reach.
 
-Talk to Hermes from Home Assistant — voice pipeline, Assist dialog, or an
-automation — and let Hermes act on your house from any of its channels.
+## What it does
 
-> **Status:** Streaming chat plus restricted house control over MCP.
+Two things, in opposite directions:
 
-This integration supplies the conversation stage of an existing Home Assistant
-Assist pipeline. Speech-to-text, text-to-speech, wake-word detection and voice
-satellite hardware are provided by separate Home Assistant integrations.
-
-## How it works
-
-Home Assistant and Hermes each drive one direction, over a different protocol:
-
-```
-                 ┌──────────────── Home Assistant ─────────────────┐
- voice / Assist ─┼─▶ conversation entity ─── text+SSE ──▶ Hermes   │
-                 │                                                 │
- Telegram ───────┼──▶ Hermes ─── MCP ──▶ mcp_server ──▶ restricted │
-                 │                       (built-in)      LLM API   │
-                 └─────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    V[Voice satellite / Assist chat] -->|text| E[Conversation agent]
+    E -->|streamed reply| V
+    E -->|chat request| H[Hermes profile]
+    H -->|MCP tools| M[HA MCP server]
+    M --> G[Guard: no locks, no doors]
+    G --> HA[Lights, lists, covers...]
+    T[Telegram, cron, anything Hermes has] --> H
 ```
 
-Hermes' OpenAI-compatible endpoint runs its own agent loop and ignores tools sent
-by a client, so Home Assistant cannot hand it tools the way the core LLM
-integrations do. Instead Hermes reaches Home Assistant through HA's built-in
-**Model Context Protocol Server**, which means house control works from *every*
-Hermes channel — Telegram included — not just a voice pipeline.
+1. **Home Assistant talks to Hermes.** The integration adds a conversation agent
+   you can put in a voice pipeline or the Assist dialog. It streams the reply
+   back as Hermes writes it.
+2. **Hermes talks to Home Assistant.** Hermes reaches the house through Home
+   Assistant's built-in MCP server, so it can act from Telegram or a cron job
+   as easily as from a voice request. Locks and doors are withheld.
 
-The full reasoning, with citations, is in [DESIGN.md](DESIGN.md).
+Speech-to-text, text-to-speech, wake words and satellites come from your
+existing Home Assistant setup; this only supplies the agent.
 
-## Setup
+## Install
 
-There are two halves, and they are independent: the conversation agent works on
-its own, and so does house control. Do the first, add the second when you want
-Hermes to be able to act; targeted announcements come with the second.
+### 1. Connect to Hermes
 
-### 1. Talking to Hermes from Home Assistant
-
-Add this repository to [HACS][hacs] as a custom repository of category
-**Integration**, install it, restart Home Assistant, then add **Hermes
-Conversation** from *Settings → Devices & Services*.
-
-You will need:
+Add this repository to [HACS][hacs] as a custom **Integration**, install it,
+restart Home Assistant, then add **Hermes Conversation** from *Settings →
+Devices & Services*. You need three things:
 
 | | |
 |---|---|
-| Gateway URL | The root, e.g. `http://10.0.0.3:8642` — **not** the `/p/<profile>/v1` path |
+| Gateway URL | The root, e.g. `http://10.0.0.3:8642` (not the `/p/<profile>/v1` path) |
 | Profile | e.g. `home-assist` |
 | API key | That profile's `API_SERVER_KEY` |
 
-Each profile is its own config entry, because each authenticates with its own
-key. Under an entry you can add several agents, and edit any of them later
-without re-adding anything.
+The Hermes side needs `gateway.api_server.enabled: true`, and
+`gateway.multiplex_profiles: true` if you use more than one profile. If the
+gateway ignores the profile name, the integration raises a repair to tell you.
 
-#### Agent options
+One entry per profile. Each entry can hold several agents, edited any time.
 
-| Option | Default | What it does |
+### 2. Let Hermes act on the house
+
+Optional. Do it when you want Hermes to switch things, not just talk.
+
+1. **Make a user for Hermes.** *Settings → People → Add person*, turn on
+   *Allow login*, leave *Administrator* off. The logbook will show what Hermes
+   did under that name, and the next step can restrict it.
+2. **Create its token.** Sign in as that user in a private window, then
+   *Profile → Security → Long-lived access tokens*. Copy it once, store it
+   with your Hermes secrets.
+3. **Add the MCP server.** *Settings → Devices & Services → Add Integration →
+   Model Context Protocol Server*. When asked which API to expose, choose
+   **Assist (locks and doors withheld)**. Choosing plain Assist gives Hermes
+   everything; the integration raises a repair if you do.
+4. **Point Hermes at it**, in the profile's config:
+
+   ```yaml
+   mcp_servers:
+     home_assistant:
+       url: "http://<home-assistant>:8123/api/mcp"
+       headers:
+         Authorization: "Bearer ${HA_TOKEN}"
+   ```
+
+5. **Expose what Hermes may see.** *Settings → Voice assistants → Expose*.
+   Hermes only sees exposed entities.
+6. **Pick the Hermes user.** Open the integration's *Configure* and choose the
+   user from step 1. This puts it in a user group that Home Assistant itself
+   keeps read-only on locks and doors. See [How the door stays shut](#how-the-door-stays-shut).
+
+### 3. Talk to it
+
+Set the new agent as the conversation agent of a voice pipeline, or pick it in
+the Assist dialog.
+
+## Agent options
+
+| Option | Default | Meaning |
 |---|---|---|
-| Name | `Hermes` | The entity name in Home Assistant |
-| Model | *(profile name)* | Which of the models the profile advertises this agent uses; the entry named after the profile means its own default, see below |
-| System prompt | *(voice example below)* | Prepended to every conversation; a template, see below |
-| Timeout | 120 s | How long to wait for a reply before giving up |
-| Session idle timeout | 5 min | How long a satellite may stay quiet before its next request starts a fresh Hermes session; `0` starts a new session on every turn |
+| Name | `Hermes` | Entity name |
+| Model | the profile | Which model alias the profile advertises, see below |
+| System prompt | voice example below | Prepended to every conversation; a template |
+| Timeout | 120 s | How long to wait for a reply |
+| Session idle timeout | 5 min | Quiet time after which a satellite starts a fresh Hermes session; `0` means a fresh session every turn |
 
-**Model choices.** The Model list is whatever the profile advertises on
-`/v1/models`, and by default that is only the profile's own name, meaning "the
-profile's default model". Hermes deliberately ignores
-any other model name a client sends, so the list is not free text. To offer a
-choice per agent, define aliases on the Hermes gateway; they appear in the list
-and each pins a provider and model:
+### Prompt
+
+The prompt is a template with these variables:
+
+| Variable | Value |
+|---|---|
+| `ha_name` | Your Home Assistant's location name |
+| `user_name` | Who spoke, if known |
+| `satellite_id` | The `assist_satellite` entity the request came from |
+| `satellite_name` | Its friendly name |
+| `area_name` | Its area, or its device's area |
+
+The Assist dialog has no satellite, so those three render empty there. New
+agents start with this:
+
+```jinja
+You are the voice of the house at {{ ha_name }}. Your reply is spoken aloud, so answer in one or two short plain sentences with no lists, markdown, or emoji. Do not narrate what you are doing.
+{% if user_name %}You are talking to {{ user_name }}.{% endif %}
+{% if satellite_id %}The request came from {{ satellite_name or satellite_id }}{% if area_name %} in the {{ area_name }}{% endif %}. When a command names no room, assume the {{ area_name or "same" }} area. Send any announcements to {{ satellite_id }}.{% endif %}
+Use the Home Assistant tools to check state before answering questions about the house, and confirm briefly after acting.
+```
+
+### Models
+
+The list is what the profile advertises. By default that is one entry named
+after the profile, meaning "its own default model". To offer a choice, define
+aliases on the gateway; they show up in the list:
 
 ```yaml
 gateway:
@@ -86,202 +134,89 @@ gateway:
           model: gpt-5.6-terra
 ```
 
-Under `gateway.multiplex_profiles` the default profile owns the API server, so
-the aliases live in its config and are shared by every profile. A routed turn
-still uses the profile's `fallback_providers` if the pinned provider fails.
+A routed turn still falls back through the profile's `fallback_providers`.
 
-**Sessions.** Every satellite (falling back to the device, then to Home
-Assistant's own conversation) gets its own Hermes session, and consecutive
-turns continue it. Hermes then keeps the transcript itself, so each request
-carries only the new turn and the model's prompt cache stays warm. When a
-satellite has been idle longer than the session timeout, its next request
-starts over. Reloading the integration or editing the agent also starts over.
-With the timeout at `0`, Hermes is stateless and the Home Assistant chat log is
-sent with every request instead.
+### Sessions
 
-The Assist dialog in the Home Assistant UI has no satellite or device, so it
-keys on the dialog's own conversation: the dialog continues one session until
-it is closed or goes idle.
+Each satellite gets its own Hermes session and keeps it across turns, so
+Hermes remembers the conversation and its prompt cache stays warm. A satellite
+that goes quiet longer than the idle timeout starts over. The Assist dialog
+keys on its own conversation instead.
 
-**Prompt template variables.**
+## Announcing on one satellite
 
-| Variable | Value |
-|---|---|
-| `ha_name` | The Home Assistant location name |
-| `user_name` | The name of the user who spoke, if known |
-| `satellite_id` | The `assist_satellite` entity the request came from, e.g. `assist_satellite.kitchen` |
-| `satellite_name` | That satellite's friendly name |
-| `area_name` | The satellite's area, or its device's area |
+Home Assistant's own broadcast tool speaks on every satellite. This integration
+adds an `announce` tool that takes a `satellite_id` and a `message`, so Hermes
+can say "the laundry is done" in the kitchen only. The tool's description lists
+the satellites that can announce, with their rooms, so Hermes knows the
+choices. Together with the prompt variables, Hermes knows where a request came
+from and can answer there later.
 
-Voice requests carry the satellite; text chat from the Home Assistant UI does
-not, and the satellite variables render as `None`. New agents start with this
-prompt, which keeps spoken replies short and tells Hermes which satellite and
-room the request came from:
+## How the door stays shut
 
-```jinja
-You are the voice of the house at {{ ha_name }}. Your reply is spoken aloud, so answer in one or two short plain sentences with no lists, markdown, or emoji. Do not narrate what you are doing.
-{% if user_name %}You are talking to {{ user_name }}.{% endif %}
-{% if satellite_id %}The request came from {{ satellite_name or satellite_id }}{% if area_name %} in the {{ area_name }}{% endif %}. When a command names no room, assume the {{ area_name or "same" }} area. Send any announcements to {{ satellite_id }}.{% endif %}
-Use the Home Assistant tools to check state before answering questions about the house, and confirm briefly after acting.
+Locks, alarm panels, and door or garage covers can be read but never
+controlled. Two layers do this, and it matters which one you are relying on.
+
+```mermaid
+flowchart TB
+    subgraph routes["Ways the Hermes token can reach the house"]
+        A[MCP, restricted API] --> G[Layer 1: tool guard]
+        B[MCP, plain Assist] --> P
+        C[REST service call] --> P
+        D[Scripts and scenes] --> P
+        G --> P[Layer 2: user group policy]
+    end
+    P --> HA[Home Assistant acts]
 ```
 
-### 2. Letting Hermes control the house
+**Layer 1: the tool guard.** Home Assistant uses one tool for opposite jobs:
+`HassTurnOff` switches off a lamp and unlocks a lock. So the guard doesn't look
+at tool names. It works out which entities the call would land on, the same
+way Home Assistant does, and refuses if any is off limits:
 
-Hermes' OpenAI-compatible endpoint runs its own agent loop and ignores tools
-supplied by a client, so control does not travel over the conversation. It goes
-the other way, over MCP, which means it works from **every** Hermes channel —
-Telegram included — not just a Home Assistant voice pipeline.
-
-**a. Make a dedicated Home Assistant user.**
-
-Give the agent its own account rather than reusing yours. It costs two minutes
-and buys three things: the logbook and history attribute every action to
-*Hermes*, so you can tell the agent's changes from your own; Home Assistant
-refuses admin-only surfaces to a non-admin account before this integration's own
-policy runs at all; and disabling that one user cuts the agent off instantly
-without touching your session.
-
-*Settings → People → Add person*
-
-1. **Name** it something you will recognise in the logbook — `Hermes`.
-2. Turn on **Allow login**. An *Add user* dialog opens.
-3. Set a **username** and a long random **password**. You will use it once, so
-   generate it rather than choose it; a password manager entry is enough.
-4. Turn on **Local access only** if Hermes runs on your LAN. It does in the
-   reference setup, and this stops the account being usable from outside your
-   network at all.
-5. Leave **Administrator** **off**. This is the point of the exercise — an admin
-   token would let the agent reconfigure Home Assistant itself.
-6. Select **Create**, then **Add**.
-
-**b. Create its long-lived access token.**
-
-Tokens belong to whoever is signed in, so this has to be done *as that user*.
-Open a private browser window and sign in as `Hermes`, then:
-
-*User profile* (your name, bottom-left) *→ Security → Long-lived access tokens →
-Create token*
-
-Name it after what will hold it — `hermes-agent` — and copy the token
-immediately. Home Assistant shows it once and never again.
-
-Long-lived tokens do not expire, so treat it like a password: put it straight
-into your secret store and don't paste it into a shell that keeps history. If it
-leaks, delete it from this same screen and the agent loses access at once.
-
-> A non-admin account is the audit trail and keeps the agent out of Home
-> Assistant's admin surfaces. It is **not** a lock boundary on its own: a
-> non-admin user may control every entity, so this token can unlock a door
-> through a plain REST service call, and Home Assistant also serves the
-> unrestricted Assist API to any user at `/api/mcp/assist`. The restricted API
-> in step **c** only guards what arrives through it. See
-> [What the agent cannot do](#what-the-agent-cannot-do) for the exact scope.
-
-**c. Add the MCP server.** *Settings → Devices & Services → Add Integration →
-Model Context Protocol Server*. When it asks which API to expose, choose
-**"Assist (locks and doors withheld)"** — the one this integration adds.
-
-> Choosing plain **Assist** gives the agent unrestricted control, including
-> unlocking doors. Nothing errors if you do; this integration raises a repair
-> warning instead of failing quietly.
-
-**d. Point Hermes at it.** In the profile's config:
-
-```yaml
-mcp_servers:
-  home_assistant:
-    url: "http://<home-assistant>:8123/api/mcp"
-    headers:
-      Authorization: "Bearer ${HA_TOKEN}"
+```
+on tool call(args):
+    if args contain a name the guard has never seen: refuse, naming it
+    targets = match(args) exactly as HA's handler would (name "all" = no name)
+    if any target is a lock, alarm panel, or door/garage cover: refuse
+    else: run the real tool
 ```
 
-`HA_TOKEN` is the token from step **b**; set it in whatever holds your Hermes
-secrets rather than inlining it here.
+This only sees calls that arrive through the restricted API. The same token
+can also call the REST API, the plain Assist API at `/api/mcp/assist`, and run
+exposed scripts, none of which pass through it.
 
-Use the bare `/api/mcp`. The `/api/mcp/<api_id>` form requires an *administrator*
-token for anything other than Assist, which would undo the dedicated user.
+**Layer 2: the user group.** Home Assistant checks the calling user's group
+policy on every entity action, on every route. Policies can only allow, never
+deny, so the integration builds one that allows control of everything except
+the forbidden entities and keeps "everything else" read-only:
 
-**e. Expose what it may see.** *Settings → Voice assistants → Expose*. The agent
-can only see and act on exposed entities.
+```
+policy:
+    domains:    every domain in the house except lock, alarm_control_panel, cover  -> read + control
+    entity_ids: every cover that is not a door or garage                          -> read + control
+    all:                                                                          -> read only
+```
 
-### 3. Speaking on one satellite
+It rebuilds the policy whenever an entity appears or is re-registered, and it
+moves the user you picked into that group and nobody else. Home Assistant has
+no UI for custom groups, so this uses two internal names of the auth store; if
+a future Home Assistant renames them, a repair tells you and layer 1 keeps
+working.
 
-Home Assistant's own `HassBroadcast` tool speaks on every satellite at once and
-takes no target. This integration adds an `announce` tool alongside it that
-takes a `satellite_id` and a `message`, so Hermes can say "the laundry is done"
-in the kitchen and nowhere else, whether the trigger was a voice request, a
-Telegram message, or a cron job.
+What is still on you:
 
-The tool's description carries the list of satellites that accept
-announcements, each with its name and area, refreshed every time Hermes
-connects to the MCP server. Hermes cannot fetch MCP prompts, so the list lives
-on the tool rather than in the API prompt. Satellites do not need to be
-exposed to Assist for this; they are output devices, and the tool refuses any
-id that is not on its list. VoIP phones are left out, matching Home
-Assistant's broadcast behaviour.
-
-Together with the `satellite_id` prompt variable this closes the loop: the
-default prompt tells Hermes which satellite asked, and the tool lets it reply
-there later.
-
-## What the agent cannot do
-
-Through the restricted API, writes to **locks**, **door and garage covers**,
-and **alarm panels** are refused. This is not configurable — changing it is a
-code change and a release, which is the right amount of friction for a front
-door.
-
-Home Assistant uses one tool for opposite intentions: its own prompt says *"Use
-HassTurnOn to lock and HassTurnOff to unlock a lock"*. Unlocking a door is
-therefore the same call as switching off a lamp, so withholding tools by name
-cannot separate them. Instead every call is matched to its **targets** exactly
-as Home Assistant's own handler would match it, and refused if any target is
-off limits — even when the model never mentioned a lock. A command broad enough
-to sweep one in ("turn off everything in the hallway", or a name of "all") is
-refused rather than partly executed.
-
-Reading is unaffected. "Is the front door locked?" still answers.
-
-The guard fails closed. Every argument an Assist tool accepts is classified as
-either a target (name, area, floor, domain, device class) or a value
-(brightness, colour, list item, and so on). A call carrying an argument the
-guard has never seen is refused with an error naming the argument, so a Home
-Assistant upgrade that adds a new slot shows up as a refusal until this
-integration learns it. The test suite walks the parameters of every tool the
-Assist API assembles to catch that before release.
-
-### What it does not cover
-
-Be precise about the boundary, because it is narrower than "Hermes cannot open
-the door":
-
-- **Scripts, scenes and automations run unguarded.** An exposed script is both
-  reachable through `HassTurnOn` and offered as its own tool, and what it does
-  inside is invisible to the guard. A script that unlocks the door will unlock
-  the door. Do not expose one.
-- **The token is not scoped.** A non-admin Home Assistant user may control
-  every entity, exposed or not, so the same bearer token can unlock a lock
-  through a REST service call, and Home Assistant serves the unrestricted
-  Assist API to any user at `/api/mcp/assist`. The guard only sees calls that
-  arrive through the restricted API you selected in the MCP server. Hermes
-  profiles with shell or code-execution tools hold that token in their
-  environment.
-- **Unexposing the locks** closes both MCP routes and the conversation API,
-  because Assist tools only see exposed entities. It does not close the REST
-  route, and it also stops "is the front door locked?" from answering.
-
-Home Assistant's own permission system can close every route at once with a
-user-group policy on the Hermes user that grants read-only access to locks,
-alarm panels and door covers. Home Assistant has no UI for custom groups;
-support for creating and maintaining that group from this integration is the
-next planned change.
+- Pick the user in the integration's options. Without that, only layer 1
+  applies.
+- The user must not be an administrator. Admins bypass every policy, and the
+  integration refuses to demote one.
+- Anything that runs without Hermes's user context, such as an automation
+  fired by an event, is outside both layers.
 
 ## Checking it works
 
-Hermes never stores or logs the prompt a client sends — it is layered onto the
-profile's own system prompt for the duration of each turn — so the satellite
-and session details are only visible from the Home Assistant side. Turn on
-debug logging for the integration:
+Hermes never stores the prompt a client sends, so verify from the Home
+Assistant side. Turn on debug logging:
 
 ```yaml
 logger:
@@ -289,70 +224,42 @@ logger:
     custom_components.hermes_conversation: debug
 ```
 
-Each turn then logs which session it joined and where it came from:
+Each turn then logs its session and origin:
 
 ```
 Hermes session ha-8e32e955… for assist_satellite.kitchen (satellite=assist_satellite.kitchen device=abc123)
-Streaming from profile home-assist with model home-assist (2 messages)
 ```
-
-A satellite of `None` means the request did not come through a voice pipeline
-(the Assist dialog, an automation, a developer-tools call), and the prompt's
-satellite variables render empty for that turn.
 
 On the Hermes side, the profile's `logs/agent.log` shows the same session id
-and how much transcript Hermes loaded for it. A `history` that grows across
-turns means the session is being continued:
+and a `history=N` that grows across turns while the session continues.
 
-```
-agent.turn_context: conversation turn: session=ha-8e32e955… platform=api_server history=0 msg='What is on my shopping list?'
-agent.turn_context: conversation turn: session=ha-8e32e955… platform=api_server history=4 msg='Lets mark milk complete'
-```
-
-If instead every turn is `history=0` with a new id, the satellite is idling past
-the session timeout, or the integration was reloaded between turns.
+Diagnostics for the entry report whether the MCP server serves the restricted
+API and whether the user-group policy is in force.
 
 ## Requirements
 
-- Home Assistant **2026.8.2** or later
-- A reachable Hermes gateway with `gateway.api_server.enabled: true`
-- For named profiles: `gateway.multiplex_profiles: true`, so `/p/<profile>/`
-  resolves. **With it off, Hermes silently ignores the prefix and every request
-  lands on the default profile.** Nothing fails, so this integration probes for
-  it on setup and raises a repair warning rather than letting an agent quietly
-  answer as the wrong persona.
-
-## Roadmap
-
-| | |
-|---|---|
-| ✅ | Streaming chat, per-profile entries, reauth and reconfigure |
-| ✅ | Agents configurable in the UI: model, system prompt, timeout, session timeout |
-| ✅ | Per-satellite session continuity, with the satellite and its area in the prompt |
-| ✅ | Targeted announcements: an `announce` tool that speaks on one named satellite |
-| ✅ | Restricted LLM API for MCP, with locks and doors withheld |
-| ✅ | Diagnostics, and repair checks for the boundary and profile routing |
-| ⬜ | `ai_task` support |
+- Home Assistant 2026.8.2 or later
+- A reachable Hermes gateway with the API server enabled
 
 ## Development
 
 [uv][uv] handles everything; Python 3.14.2 or later is the only prerequisite.
+A `flake.nix` gives Nix users the same toolchain with `nix develop`.
 
 ```sh
-uv sync              # install dev dependencies
-uv run pytest        # tests
-uv run ruff check .  # lint
-uv run ruff format . # format
+uv sync
+uv run pytest --cov=custom_components --cov-report=json:coverage.json
+uv run python scripts/check_guard_coverage.py
 uv run mypy custom_components
+uv run ruff check .
 ```
 
-Home Assistant pins its dependency closure exactly and releases monthly, so the
-dev dependencies pin `pytest-homeassistant-custom-component` to the release that
-matches the Home Assistant version this targets. `uv.lock` is committed to keep
-CI reproducible.
+The guard and the policy module must stay at 100% coverage; a missing branch
+there is a hole, not a style problem. The dev dependencies pin the Home
+Assistant release this targets, and `uv.lock` is committed.
 
-A `flake.nix` is included for Nix users — `nix develop` gives you the same
-toolchain — but it is entirely optional and nothing depends on it.
+The original design notes, with citations into Home Assistant's source, are in
+[DESIGN.md](DESIGN.md).
 
 ## Licence
 

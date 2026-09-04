@@ -31,9 +31,10 @@ nix develop --command ruff check .
 nix develop --command ruff format .
 ```
 
-`custom_components/hermes_conversation/llm.py` is the capability boundary and
-must stay at 100% coverage; a missing branch there is a vulnerability, not a
-test gap.
+`custom_components/hermes_conversation/llm.py` (the tool guard) and
+`custom_components/hermes_conversation/policy.py` (the user-group policy) are
+the capability boundary and must stay at 100% coverage; a missing branch there
+is a vulnerability, not a test gap.
 
 ## Working rules
 

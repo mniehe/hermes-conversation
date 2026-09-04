@@ -12,8 +12,9 @@ in mind.
   controls every entity through the REST API, and HA serves the unrestricted
   Assist API at `/api/mcp/assist` to any user, so layers 1 and 2 below only
   cover calls made through the restricted API. Scripts and scenes run
-  unguarded. The README states the real scope; a user-group policy on the
-  Hermes user is the planned fix.
+  unguarded on their own. `policy.py` now keeps the Hermes user in a
+  user group that Home Assistant enforces on every route; the README
+  explains both layers.
 - **No exposure repair issue.** The "lock is exposed" repair in §3 was never
   built. The two repairs that exist are `mcp_server_unrestricted` and
   `profile_ignored`.

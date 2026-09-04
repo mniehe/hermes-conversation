@@ -36,7 +36,7 @@ The full reasoning, with citations, is in [DESIGN.md](DESIGN.md).
 
 There are two halves, and they are independent: the conversation agent works on
 its own, and so does house control. Do the first, add the second when you want
-Hermes to be able to act.
+Hermes to be able to act; targeted announcements come with the second.
 
 ### 1. Talking to Hermes from Home Assistant
 
@@ -201,6 +201,26 @@ token for anything other than Assist, which would undo the dedicated user.
 **e. Expose what it may see.** *Settings → Voice assistants → Expose*. The agent
 can only see and act on exposed entities.
 
+### 3. Speaking on one satellite
+
+Home Assistant's own `HassBroadcast` tool speaks on every satellite at once and
+takes no target. This integration adds an `announce` tool alongside it that
+takes a `satellite_id` and a `message`, so Hermes can say "the laundry is done"
+in the kitchen and nowhere else, whether the trigger was a voice request, a
+Telegram message, or a cron job.
+
+The tool's description carries the list of satellites that accept
+announcements, each with its name and area, refreshed every time Hermes
+connects to the MCP server. Hermes cannot fetch MCP prompts, so the list lives
+on the tool rather than in the API prompt. Satellites do not need to be
+exposed to Assist for this; they are output devices, and the tool refuses any
+id that is not on its list. VoIP phones are left out, matching Home
+Assistant's broadcast behaviour.
+
+Together with the `satellite_id` prompt variable this closes the loop: the
+default prompt tells Hermes which satellite asked, and the tool lets it reply
+there later.
+
 ## What the agent cannot do
 
 Writes to **locks**, **door and garage covers**, and **alarm panels** are
@@ -278,6 +298,7 @@ the session timeout, or the integration was reloaded between turns.
 | ✅ | Streaming chat, per-profile entries, reauth and reconfigure |
 | ✅ | Agents configurable in the UI: model, system prompt, timeout, session timeout |
 | ✅ | Per-satellite session continuity, with the satellite and its area in the prompt |
+| ✅ | Targeted announcements: an `announce` tool that speaks on one named satellite |
 | ✅ | Restricted LLM API for MCP, with locks and doors withheld |
 | ✅ | Diagnostics, and repair checks for the boundary and profile routing |
 | ⬜ | `ai_task` support |

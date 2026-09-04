@@ -14,6 +14,7 @@ from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import async_mock_service
 
 from custom_components.hermes_conversation.llm import (
+    ANNOUNCE_TOOL,
     RESTRICTED_API_ID,
     _targets_forbidden,
 )
@@ -115,7 +116,9 @@ async def test_offers_the_same_tools_as_assist(hass: HomeAssistant, house) -> No
     assist = await llm.async_get_api(hass, llm.LLM_API_ASSIST, context)
     guarded = await _api(hass)
 
-    assert {tool.name for tool in guarded.tools} == {tool.name for tool in assist.tools}
+    assert {tool.name for tool in guarded.tools} == {
+        tool.name for tool in assist.tools
+    } | {ANNOUNCE_TOOL}
 
 
 @pytest.mark.parametrize("tool", ["HassTurnOff", "HassTurnOn"])

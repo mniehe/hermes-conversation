@@ -11,9 +11,6 @@ from homeassistant.config_entries import ConfigSubentry
 from homeassistant.const import CONF_MODEL, CONF_PROMPT, CONF_TIMEOUT, MATCH_ALL
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import area_registry as ar
-from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import template
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
@@ -32,6 +29,7 @@ from .const import (
     SECONDS_PER_MINUTE,
     SUBENTRY_TYPE_CONVERSATION,
 )
+from .satellites import area_name
 from .session import SessionTracker
 
 _LOGGER = logging.getLogger(__name__)
@@ -46,25 +44,8 @@ def _satellite_context(hass: HomeAssistant, satellite_id: str | None) -> dict[st
     return {
         "satellite_id": satellite_id,
         "satellite_name": state.name if state else None,
-        "area_name": _area_name(hass, satellite_id),
+        "area_name": area_name(hass, satellite_id),
     }
-
-
-def _area_name(hass: HomeAssistant, entity_id: str) -> str | None:
-    """Return the area of an entity, falling back to its device's area."""
-    entity = er.async_get(hass).async_get(entity_id)
-    if entity is None:
-        return None
-
-    area_id = entity.area_id
-    if area_id is None and entity.device_id:
-        device = dr.async_get(hass).async_get(entity.device_id)
-        area_id = device.area_id if device else None
-    if area_id is None:
-        return None
-
-    area = ar.async_get(hass).async_get_area(area_id)
-    return area.name if area else None
 
 
 async def _transform_stream(

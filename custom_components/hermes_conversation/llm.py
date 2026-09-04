@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Any, override
 
+import voluptuous as vol
 from homeassistant.components.llm import LLMTools
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_LLM_HASS_API
@@ -22,6 +23,7 @@ from homeassistant.helpers import issue_registry as ir
 from homeassistant.util.json import JsonObjectType
 
 from .const import DOMAIN
+from .satellites import SATELLITE_DOMAIN, SERVICE_ANNOUNCE, announce_capable
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -77,6 +79,14 @@ NON_TARGET_SLOTS = (
     "conversation_command",
 )
 READ_ONLY_TOOLS = ("GetLiveContext", "GetDateTime", "todo_get_items")
+
+ANNOUNCE_TOOL = "announce"
+ANNOUNCE_DESCRIPTION = (
+    "Speak a message aloud on one Assist satellite. Use it to notify a room "
+    "unprompted; a reply to the person you are talking to is spoken there "
+    "already. Satellites that can announce: "
+)
+NO_SATELLITES = "none right now"
 
 MCP_SERVER_DOMAIN = "mcp_server"
 ISSUE_UNRESTRICTED_MCP = "mcp_server_unrestricted"
@@ -149,16 +159,70 @@ class HermesRestrictedAPI(llm.API):
     async def async_get_api_instance(
         self, llm_context: llm.LLMContext
     ) -> llm.APIInstance:
-        """Wrap every Assist tool in a target guard."""
+        """Wrap every Assist tool in a target guard, and add targeted announcements."""
         assist = await llm.async_get_api(self.hass, llm.LLM_API_ASSIST, llm_context)
+        tools: list[llm.Tool] = [GuardedTool(tool) for tool in assist.tools]
+        tools.append(AnnounceTool(self.hass))
 
         return llm.APIInstance(
             api=self,
             api_prompt=assist.api_prompt + GUARD_PROMPT,
             llm_context=llm_context,
-            tools=[GuardedTool(tool) for tool in assist.tools],
+            tools=tools,
             custom_serializer=assist.custom_serializer,
         )
+
+
+class AnnounceTool(llm.Tool):
+    """Speak on one satellite, unlike HassBroadcast which speaks on all.
+
+    The MCP server only ever hands Hermes the tool list, never the API prompt,
+    so the satellites the model may pick from travel in the description.
+    """
+
+    name = ANNOUNCE_TOOL
+    parameters = vol.Schema(
+        {
+            vol.Required("satellite_id"): str,
+            vol.Required("message"): vol.All(str, vol.Length(min=1)),
+        }
+    )
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        """List the satellites available at the time the tools are assembled."""
+        listed = "; ".join(s.describe() for s in announce_capable(hass))
+        self.description = ANNOUNCE_DESCRIPTION + (listed or NO_SATELLITES) + "."
+
+    @override
+    async def async_call(
+        self,
+        hass: HomeAssistant,
+        tool_input: llm.ToolInput,
+        llm_context: llm.LLMContext,
+    ) -> JsonObjectType:
+        """Announce on the named satellite, refusing one that cannot play it."""
+        try:
+            args = self.parameters(tool_input.tool_args)
+        except vol.Invalid as err:
+            return {"error": f"Invalid arguments: {err}"}
+
+        satellites = {s.entity_id: s for s in announce_capable(hass)}
+        satellite = satellites.get(args["satellite_id"])
+        if satellite is None:
+            return {
+                "error": f"Unknown satellite {args['satellite_id']}. "
+                f"Choose one of: {', '.join(satellites) or NO_SATELLITES}."
+            }
+
+        await hass.services.async_call(
+            SATELLITE_DOMAIN,
+            SERVICE_ANNOUNCE,
+            {"message": args["message"]},
+            target={"entity_id": satellite.entity_id},
+            blocking=True,
+            context=llm_context.context,
+        )
+        return {"success": True, "result": f"Announced on {satellite.name}"}
 
 
 class GuardedTool(llm.Tool):

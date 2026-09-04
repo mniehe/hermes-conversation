@@ -315,3 +315,50 @@ async def test_alarm_panel_is_refused(hass: HomeAssistant, load_entry, calls) ->
 async def test_list_intent_arguments_pass_the_guard(hass: HomeAssistant, house) -> None:
     """Shopping list arguments are values, not targets; the guard must pass them."""
     assert not _targets_forbidden(hass, {"item": "milk", "name": "Shopping"}, ASSISTANT)
+
+
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [
+        ("HassTurnOff", {"name": "all", "domain": ["lock"]}),
+        ("HassTurnOn", {"name": "all", "device_class": ["garage"]}),
+        ("HassTurnOn", {"name": "all", "domain": ["cover"]}),
+        ("HassTurnOff", {"name": "all"}),
+    ],
+)
+async def test_name_all_is_a_sweep_not_a_name(
+    hass: HomeAssistant, house, calls, tool: str, args: dict
+) -> None:
+    """Home Assistant treats a name of "all" as no name; the guard must too."""
+    result = await _call(hass, tool, **args)
+
+    assert _refused(result)
+    assert not calls["lock.unlock"]
+    assert not calls["cover.open_cover"]
+
+
+async def test_name_all_in_an_area_with_a_lock_is_refused(
+    hass: HomeAssistant, load_entry, calls
+) -> None:
+    await load_entry()
+    await _in_area(hass, "light.hall", "hall light", "Hallway")
+    await _in_area(hass, "lock.hall_door", "hall door", "Hallway")
+
+    result = await _call(hass, "HassTurnOff", name="all", area="Hallway")
+
+    assert _refused(result)
+    assert not calls["lock.unlock"]
+
+
+async def test_name_all_over_safe_entities_is_allowed(
+    hass: HomeAssistant, load_entry, calls
+) -> None:
+    """The sweep rule must not make every "all" command fail."""
+    await load_entry()
+    await _in_area(hass, "light.office", "office light", "Office")
+    await _in_area(hass, "light.office_lamp", "office lamp", "Office")
+
+    result = await _call(hass, "HassTurnOff", name="all", area="Office")
+
+    assert not _refused(result)
+    assert len(calls["light.turn_off"]) == 2

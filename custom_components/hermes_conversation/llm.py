@@ -14,10 +14,11 @@ import logging
 from typing import Any, override
 
 import voluptuous as vol
+from homeassistant.components.cover import DOMAIN as COVER_DOMAIN
 from homeassistant.components.llm import LLMTools
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_LLM_HASS_API
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.const import ATTR_DEVICE_CLASS, CONF_LLM_HASS_API
+from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.helpers import intent, llm
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.util.json import JsonObjectType
@@ -35,6 +36,9 @@ RESTRICTED_API_NAME = "Assist (locks and doors withheld)"
 # hold if Home Assistant adds an arming or disarming intent later.
 FORBIDDEN_DOMAINS = ("lock", "alarm_control_panel")
 FORBIDDEN_COVER_CLASSES = ("door", "garage")
+
+# The name Home Assistant treats as "no name constraint" when matching.
+ALL_ENTITIES = "all"
 
 GUARD_PROMPT = (
     "\n\nYou cannot lock, unlock, open or close doors, garage doors or locks, "
@@ -263,10 +267,9 @@ def _targets_forbidden(
     """Return whether this call could resolve to something off limits.
 
     The question asked is "could these arguments reach a lock or a door?", not
-    "did the model name one". Constraining the match to the forbidden domains
-    means an unrelated call finds nothing and passes untouched, while a call
-    broad enough to sweep a lock in is refused even when the model never
-    mentioned it.
+    "did the model name one". The match is built the way Home Assistant builds
+    it for the real handler, so the guard sees the same entities the intent
+    would act on, including the ones a broad sweep pulls in.
     """
     if set(tool_args) - set(TARGET_SLOTS) - set(NON_TARGET_SLOTS):
         # Unknown arguments may be target selectors added by a future Assist
@@ -275,70 +278,50 @@ def _targets_forbidden(
     if not any(slot in tool_args for slot in TARGET_SLOTS):
         return False
 
-    for constraints in _forbidden_constraints(tool_args, assistant):
-        try:
-            if intent.async_match_targets(hass, constraints).is_match:
-                return True
-        except Exception:
-            # An unresolvable match must not become an accidental allow.
-            _LOGGER.exception("Target guard failed; refusing the call")
-            return True
+    try:
+        matched = intent.async_match_targets(
+            hass, _handler_constraints(tool_args, assistant)
+        )
+    except Exception:
+        # An unresolvable match must not become an accidental allow.
+        _LOGGER.exception("Target guard failed; refusing the call")
+        return True
 
-    return False
+    return any(_is_forbidden(state) for state in matched.states)
 
 
-def _forbidden_constraints(
+def _handler_constraints(
     tool_args: dict[str, Any], assistant: str | None
-) -> list[intent.MatchTargetsConstraints]:
-    """Build the "would this touch a lock, or a door?" queries."""
+) -> intent.MatchTargetsConstraints:
+    """Build the match the intent handler itself would run.
+
+    Mirrors DynamicServiceIntentHandler: a name of "all" means no name
+    constraint, so a sweep resolves to everything the other slots allow.
+    """
     name = tool_args.get("name")
-    area = tool_args.get("area")
-    floor = tool_args.get("floor")
-    requested_domains = _string_values(tool_args.get("domain"))
-    requested_classes = _string_values(tool_args.get("device_class"))
-    constraints: list[intent.MatchTargetsConstraints] = []
+    if name == ALL_ENTITIES:
+        name = None
 
-    forbidden_domains = tuple(
-        domain
-        for domain in FORBIDDEN_DOMAINS
-        if requested_domains is None or domain in requested_domains
+    domains = _string_values(tool_args.get("domain"))
+    device_classes = _string_values(tool_args.get("device_class"))
+    return intent.MatchTargetsConstraints(
+        name=name,
+        area_name=tool_args.get("area"),
+        floor_name=tool_args.get("floor"),
+        domains=domains,
+        device_classes=device_classes,
+        assistant=assistant,
+        allow_duplicate_names=True,
     )
-    if forbidden_domains:
-        constraints.append(
-            intent.MatchTargetsConstraints(
-                name=name,
-                area_name=area,
-                floor_name=floor,
-                domains=forbidden_domains,
-                device_classes=(
-                    tuple(requested_classes) if requested_classes else None
-                ),
-                assistant=assistant,
-                allow_duplicate_names=True,
-            )
-        )
 
-    forbidden_cover_classes = tuple(
-        device_class
-        for device_class in FORBIDDEN_COVER_CLASSES
-        if requested_classes is None or device_class in requested_classes
+
+def _is_forbidden(state: State) -> bool:
+    if state.domain in FORBIDDEN_DOMAINS:
+        return True
+    return (
+        state.domain == COVER_DOMAIN
+        and state.attributes.get(ATTR_DEVICE_CLASS) in FORBIDDEN_COVER_CLASSES
     )
-    if (
-        requested_domains is None or "cover" in requested_domains
-    ) and forbidden_cover_classes:
-        constraints.append(
-            intent.MatchTargetsConstraints(
-                name=name,
-                area_name=area,
-                floor_name=floor,
-                domains=("cover",),
-                device_classes=forbidden_cover_classes,
-                assistant=assistant,
-                allow_duplicate_names=True,
-            )
-        )
-
-    return constraints
 
 
 def _string_values(value: Any) -> set[str] | None:

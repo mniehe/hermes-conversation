@@ -141,3 +141,42 @@ async def test_new_agent_form_suggests_default_prompt(
     schema = result["data_schema"].schema
     prompt_field = next(key for key in schema if str(key) == CONF_PROMPT)
     assert prompt_field.default() == DEFAULT_PROMPT
+
+
+async def test_model_default_is_what_the_profile_advertises_first(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
+) -> None:
+    """A named profile advertises its own name, not hermes-agent."""
+    entry = await load_entry()
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "home-assist"}, {"id": "fast"}]}
+    )
+
+    result = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, SUBENTRY_TYPE_CONVERSATION), context={"source": "user"}
+    )
+
+    schema = result["data_schema"].schema
+    model_field = next(key for key in schema if str(key) == CONF_MODEL)
+    assert model_field.default() == "home-assist"
+    assert schema[model_field].config["options"] == ["home-assist", "fast"]
+
+
+async def test_stored_model_stays_selectable(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
+) -> None:
+    """Editing an agent must not drop a model the gateway no longer lists."""
+    entry = await load_entry({CONF_MODEL: "smart"})
+    subentry_id = next(iter(entry.subentries))
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(MODELS_URL, json={"data": [{"id": "home-assist"}]})
+
+    result = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, SUBENTRY_TYPE_CONVERSATION),
+        context={"source": "reconfigure", "subentry_id": subentry_id},
+    )
+
+    schema = result["data_schema"].schema
+    model_field = next(key for key in schema if str(key) == CONF_MODEL)
+    assert schema[model_field].config["options"] == ["smart", "home-assist"]

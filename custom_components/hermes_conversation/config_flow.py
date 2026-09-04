@@ -238,16 +238,27 @@ class HermesSubentryFlowHandler(ConfigSubentryFlow):
         return self.async_show_form(
             step_id="user" if is_new else "reconfigure",
             data_schema=self.add_suggested_values_to_schema(
-                await self._async_schema(entry, is_new=is_new), defaults
+                await self._async_schema(entry, defaults.get(CONF_MODEL)), defaults
             ),
         )
 
-    async def _async_schema(self, entry: ConfigEntry, *, is_new: bool) -> vol.Schema:
-        """Build the form, offering whichever models this profile advertises."""
+    async def _async_schema(
+        self, entry: ConfigEntry, current_model: str | None
+    ) -> vol.Schema:
+        """Build the form, offering whichever models this profile advertises.
+
+        A profile advertises its own name as the model meaning "my default",
+        plus any gateway aliases. A stored value that is no longer advertised
+        stays selectable so editing an agent never silently changes it.
+        """
         try:
             models = await entry.runtime_data.async_list_models()
         except HermesError:
-            models = [DEFAULT_MODEL]
+            models = []
+        if not models:
+            models = [current_model or DEFAULT_MODEL]
+        if current_model and current_model not in models:
+            models = [current_model, *models]
 
         schema: VolDictType = {
             vol.Required(CONF_NAME, default=DEFAULT_CONVERSATION_NAME): str
@@ -255,10 +266,8 @@ class HermesSubentryFlowHandler(ConfigSubentryFlow):
 
         schema.update(
             {
-                vol.Required(CONF_MODEL, default=DEFAULT_MODEL): SelectSelector(
-                    SelectSelectorConfig(
-                        options=models or [DEFAULT_MODEL], custom_value=False
-                    )
+                vol.Required(CONF_MODEL, default=models[0]): SelectSelector(
+                    SelectSelectorConfig(options=models, custom_value=False)
                 ),
                 vol.Optional(CONF_PROMPT, default=DEFAULT_PROMPT): TemplateSelector(),
                 vol.Required(CONF_TIMEOUT, default=REQUEST_TIMEOUT): NumberSelector(

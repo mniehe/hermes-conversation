@@ -61,14 +61,14 @@ without re-adding anything.
 | Option | Default | What it does |
 |---|---|---|
 | Name | `Hermes` | The entity name in Home Assistant |
-| Model | `hermes-agent` | Which of the profile's advertised models this agent uses; `hermes-agent` means the profile's own default, see below |
+| Model | *(profile name)* | Which of the models the profile advertises this agent uses; the entry named after the profile means its own default, see below |
 | System prompt | *(voice example below)* | Prepended to every conversation; a template, see below |
 | Timeout | 120 s | How long to wait for a reply before giving up |
 | Session idle timeout | 5 min | How long a satellite may stay quiet before its next request starts a fresh Hermes session; `0` starts a new session on every turn |
 
 **Model choices.** The Model list is whatever the profile advertises on
-`/v1/models`, and by default that is only `hermes-agent` and the profile's own
-name, both meaning "the profile's default model". Hermes deliberately ignores
+`/v1/models`, and by default that is only the profile's own name, meaning "the
+profile's default model". Hermes deliberately ignores
 any other model name a client sends, so the list is not free text. To offer a
 choice per agent, define aliases on the Hermes gateway; they appear in the list
 and each pins a provider and model:

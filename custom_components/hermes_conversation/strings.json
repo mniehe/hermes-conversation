@@ -70,7 +70,7 @@
             "session_timeout": "Session idle timeout (minutes)"
           },
           "data_description": {
-            "model": "Which model this agent asks the profile to use. 'hermes-agent' means the profile's own default.",
+            "model": "Which of the models the profile advertises this agent uses. The entry named after the profile means its own default.",
             "prompt": "Prepended to every conversation. Templates are supported, with ha_name, user_name, satellite_id, satellite_name and area_name available.",
             "timeout": "How long to wait for a reply before giving up.",
             "session_timeout": "How long a satellite can stay quiet before its next request starts a fresh Hermes session. 0 starts a new session on every turn."
@@ -86,7 +86,7 @@
             "session_timeout": "Session idle timeout (minutes)"
           },
           "data_description": {
-            "model": "Which model this agent asks the profile to use. 'hermes-agent' means the profile's own default.",
+            "model": "Which of the models the profile advertises this agent uses. The entry named after the profile means its own default.",
             "prompt": "Prepended to every conversation. Templates are supported, with ha_name, user_name, satellite_id, satellite_name and area_name available.",
             "timeout": "How long to wait for a reply before giving up.",
             "session_timeout": "How long a satellite can stay quiet before its next request starts a fresh Hermes session. 0 starts a new session on every turn."

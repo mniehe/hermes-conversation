@@ -151,10 +151,18 @@ class HermesConversationEntity(
         # stateless and the chat log is replayed instead.
         session_id: str | None = None
         if self._sessions.enabled:
-            session_id = self._sessions.session_for(
+            origin = (
                 user_input.satellite_id
                 or user_input.device_id
                 or chat_log.conversation_id
+            )
+            session_id = self._sessions.session_for(origin)
+            _LOGGER.debug(
+                "Hermes session %s for %s (satellite=%s device=%s)",
+                session_id,
+                origin,
+                user_input.satellite_id,
+                user_input.device_id,
             )
             messages.append({"role": "user", "content": user_input.text})
         else:

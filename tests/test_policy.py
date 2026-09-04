@@ -21,7 +21,6 @@ from pytest_homeassistant_custom_component.common import (
     async_mock_service,
 )
 
-from custom_components.hermes_conversation import DATA_GROUP
 from custom_components.hermes_conversation.const import (
     CONF_HERMES_USER,
     DOMAIN,
@@ -35,6 +34,7 @@ from custom_components.hermes_conversation.diagnostics import (
     async_get_config_entry_diagnostics,
 )
 from custom_components.hermes_conversation.policy import (
+    DATA_GROUP,
     GROUP_ID,
     forbidden_covers,
     restricted_policy,
@@ -393,6 +393,14 @@ async def test_stale_user_repair_goes_when_unmanaged(
     entry = await load_entry(options={CONF_HERMES_USER: "gone"})
     issue_id = f"{ISSUE_POLICY_USER_MISSING}_gone"
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+    ir.async_create_issue(
+        hass,
+        "other",
+        "policy_user_missing_gone",
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key="x",
+    )
 
     hass.config_entries.async_update_entry(entry, options={CONF_HERMES_USER: NO_USER})
     await hass.async_block_till_done()
@@ -416,3 +424,37 @@ async def _settle(hass: HomeAssistant) -> None:
     for _ in range(2):
         async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=2))
         await hass.async_block_till_done()
+
+
+async def test_group_goes_when_nobody_is_managed(
+    hass: HomeAssistant, load_entry: EntryLoader, hermes_user: MockUser
+) -> None:
+    """Uninstalling after removing the entry must leave nothing in the auth store."""
+    entry = await load_entry(options={CONF_HERMES_USER: hermes_user.id})
+    assert GROUP_ID in hass.auth._store._groups
+
+    await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert GROUP_ID not in hass.auth._store._groups
+    assert [group.id for group in hermes_user.groups] == [GROUP_ID_USER]
+
+
+async def test_only_policy_changing_entities_trigger_a_rebuild(
+    hass: HomeAssistant, load_entry: EntryLoader, hermes_user: MockUser
+) -> None:
+    hass.states.async_set("light.kitchen", "on")
+    await load_entry(options={CONF_HERMES_USER: hermes_user.id})
+    group = hass.data[DATA_GROUP]
+
+    assert not group.needs_rebuild("light.lamp")
+    assert not group.needs_rebuild("lock.back_door")
+    assert group.needs_rebuild("switch.fan")
+    assert group.needs_rebuild("cover.side")
+
+    policy_before = group.get().policy
+    hass.states.async_set("light.lamp", "on")
+    er.async_get(hass).async_get_or_create("light", "test", "lamp2")
+    await hass.async_block_till_done()
+
+    assert group.get().policy is policy_before

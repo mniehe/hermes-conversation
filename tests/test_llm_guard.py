@@ -18,6 +18,7 @@ from custom_components.hermes_conversation.llm import (
     RESTRICTED_API_ID,
     GuardedTool,
     _targets_forbidden,
+    _unknown_arguments,
 )
 
 ASSISTANT = "conversation"
@@ -272,15 +273,12 @@ async def test_guard_failure_refuses(hass: HomeAssistant, house, calls) -> None:
 
 async def test_unknown_target_slot_fails_closed(hass: HomeAssistant, house) -> None:
     """A future write intent must not bypass the guard with a new target slot."""
-    assert _targets_forbidden(
-        hass, "HassTurnOff", {"entity_id": "lock.front_door"}, ASSISTANT
-    )
-    assert _targets_forbidden(
-        hass,
-        "HassTurnOff",
-        {"domain": ["light"], "entity_id": "lock.front_door"},
-        ASSISTANT,
-    )
+    assert _unknown_arguments({"entity_id": "lock.front_door"}) == {"entity_id"}
+    assert _unknown_arguments({"domain": ["light"], "entity_id": "x"}) == {"entity_id"}
+
+    result = await _call(hass, "HassTurnOff", entity_id="lock.front_door")
+
+    assert _refused(result)
 
 
 async def test_target_constraint_normalization_fails_safe(

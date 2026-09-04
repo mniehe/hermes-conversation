@@ -8,11 +8,11 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.const import CONF_LLM_HASS_API
 from homeassistant.core import HomeAssistant
 
-from . import DATA_GROUP, HermesConfigEntry
+from . import HermesConfigEntry
 from .client import HermesError
 from .const import CONF_API_KEY, CONF_HERMES_USER, NO_USER
 from .llm import MCP_SERVER_DOMAIN, mcp_entry_is_restricted
-from .policy import GROUP_ID, forbidden_covers
+from .policy import DATA_GROUP, GROUP_ID, forbidden_covers
 
 TO_REDACT = {CONF_API_KEY}
 

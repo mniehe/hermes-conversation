@@ -12,7 +12,7 @@ maintains one.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.auth import EVENT_USER_REMOVED, EVENT_USER_UPDATED
 from homeassistant.auth.const import GROUP_ID_USER
@@ -25,6 +25,7 @@ from homeassistant.core import Event, EventStateChangedData, HomeAssistant, call
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.debounce import Debouncer
+from homeassistant.util.hass_dict import HassKey
 
 from .const import (
     CONF_HERMES_USER,
@@ -39,6 +40,8 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+DATA_GROUP: HassKey[RestrictedGroup] = HassKey(f"{DOMAIN}_group")
 
 GROUP_ID = f"{DOMAIN}_restricted"
 GROUP_NAME = "Hermes (locks and doors withheld)"
@@ -89,10 +92,11 @@ def restricted_policy(hass: HomeAssistant) -> dict[str, Any]:
         for domain in known_domains(hass)
         if domain not in READ_ONLY_DOMAINS
     }
+    withheld = set(forbidden_covers(hass))
     covers = {
         entity_id: READ_AND_CONTROL
         for entity_id in _entity_ids(hass, COVER_DOMAIN)
-        if entity_id not in forbidden_covers(hass)
+        if entity_id not in withheld
     }
 
     entities: dict[str, Any] = {"domains": domains, "all": READ_ONLY}
@@ -164,6 +168,23 @@ class RestrictedGroup:
         return group
 
     @callback
+    def needs_rebuild(self, entity_id: str) -> bool:
+        """Whether a newly seen entity could change the policy.
+
+        Most entities land in a domain that already has control, so a full
+        rebuild on every one of them is wasted; covers and unknown domains are
+        the only ones that can move the line.
+        """
+        group = self.get()
+        if group is None:
+            return False
+        domain = entity_id.partition(".")[0]
+        if domain in READ_ONLY_DOMAINS:
+            return domain == COVER_DOMAIN
+        granted = cast(dict[str, Any], group.policy["entities"])["domains"]
+        return domain not in granted
+
+    @callback
     def ensure(self) -> Group | None:
         """Create the group, or bring its policy up to date."""
         if not self.supported:
@@ -216,9 +237,20 @@ class RestrictedGroup:
             elif group in user.groups:
                 await self._async_release(user)
 
+        if not wanted:
+            self._remove()
+
         for user_id in wanted:
             if await self._hass.auth.async_get_user(user_id) is None:
                 self._issue(ISSUE_POLICY_USER_MISSING, user_id)
+
+    @callback
+    def _remove(self) -> None:
+        """Drop the group once nobody is managed, so nothing outlives the entry."""
+        store = self._store()
+        del store._groups[GROUP_ID]
+        store._async_schedule_save()
+        _LOGGER.info("Removed the %s user group", GROUP_NAME)
 
     def _drop_stale_issues(self, wanted: set[str]) -> None:
         registry = ir.async_get(self._hass)
@@ -299,14 +331,16 @@ def async_watch_entities(hass: HomeAssistant, group: RestrictedGroup) -> None:
     """
 
     @callback
-    def _refresh(_event: Event[Any]) -> None:
-        if group.get() is not None:
+    def _registry_changed(event: Event[er.EventEntityRegistryUpdatedData]) -> None:
+        if group.needs_rebuild(event.data["entity_id"]):
             group.ensure()
 
     @callback
     def _state_changed(event: Event[EventStateChangedData]) -> None:
-        if event.data["old_state"] is None:
-            _refresh(event)
+        if event.data["old_state"] is None and group.needs_rebuild(
+            event.data["entity_id"]
+        ):
+            group.ensure()
 
-    hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, _refresh)
+    hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, _registry_changed)
     hass.bus.async_listen(EVENT_STATE_CHANGED, _state_changed)

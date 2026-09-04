@@ -312,8 +312,6 @@ def _targets_forbidden(
     it for the real handler, so the guard sees the same entities the intent
     would act on, including the ones a broad sweep pulls in.
     """
-    if _unknown_arguments(tool_args):
-        return True
     if not any(slot in tool_args for slot in TARGET_SLOTS):
         return False
 

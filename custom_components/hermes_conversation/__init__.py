@@ -8,6 +8,7 @@ from homeassistant.config_entries import (
     SIGNAL_CONFIG_ENTRY_CHANGED,
     ConfigEntry,
     ConfigEntryChange,
+    ConfigEntryState,
 )
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
@@ -15,7 +16,6 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.typing import ConfigType
-from homeassistant.util.hass_dict import HassKey
 
 from .client import HermesAuthError, HermesClient, HermesConnectionError
 from .const import (
@@ -26,13 +26,16 @@ from .const import (
     ISSUE_PROFILE_IGNORED,
 )
 from .llm import MCP_SERVER_DOMAIN, async_check_mcp_server, async_register_api
-from .policy import RestrictedGroup, async_watch_entities, async_watch_users
+from .policy import (
+    DATA_GROUP,
+    RestrictedGroup,
+    async_watch_entities,
+    async_watch_users,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = (Platform.CONVERSATION,)
-
-DATA_GROUP: HassKey[RestrictedGroup] = HassKey(f"{DOMAIN}_group")
 
 type HermesConfigEntry = ConfigEntry[HermesClient]
 
@@ -43,7 +46,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     group = hass.data[DATA_GROUP] = RestrictedGroup(hass)
     async_watch_entities(hass, group)
     async_watch_users(hass, group)
-    # Versions before per-entry routing issues used one global issue id.
     ir.async_delete_issue(hass, DOMAIN, ISSUE_PROFILE_IGNORED)
 
     @callback
@@ -55,7 +57,11 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 hass, DOMAIN, f"{ISSUE_PROFILE_IGNORED}_{entry.entry_id}"
             )
             hass.async_create_task(group.async_sync_users())
-        elif entry.domain == DOMAIN and change is ConfigEntryChange.UPDATED:
+        elif (
+            entry.domain == DOMAIN
+            and change is ConfigEntryChange.UPDATED
+            and entry.state is ConfigEntryState.LOADED
+        ):
             hass.async_create_task(group.async_sync_users())
 
     async_dispatcher_connect(hass, SIGNAL_CONFIG_ENTRY_CHANGED, _config_entry_changed)

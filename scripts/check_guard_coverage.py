@@ -31,9 +31,10 @@ def _check(files: dict, path: str) -> int:
     percent = summary["percent_covered"]
     if percent < REQUIRED_PERCENT:
         missing = files[path]["missing_lines"]
+        branches = files[path].get("missing_branches", [])
         print(
             f"{path} is {percent:.1f}% covered, needs {REQUIRED_PERCENT}%. "
-            f"Uncovered lines: {missing}",
+            f"Uncovered lines: {missing}; uncovered branches: {branches}",
             file=sys.stderr,
         )
         return 1

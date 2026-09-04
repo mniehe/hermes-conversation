@@ -48,6 +48,9 @@ no_implicit_reexport = false
 module = ["tests.*"]
 disallow_untyped_defs = false
 
+[tool.coverage.run]
+branch = true
+
 [tool.coverage.report]
 fail_under = 90
 show_missing = true

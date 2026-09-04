@@ -167,68 +167,56 @@ flowchart TB
         B[MCP, plain Assist] --> P
         C[REST service call] --> P
         D[Scripts and scenes] --> P
-        G --> P[Layer 2: user group policy]
+        E[Automations] -. withheld .-> P
+        G --> P[Layer 2: user group]
     end
     P --> HA[Home Assistant acts]
 ```
 
 **Layer 1: the tool guard.** Home Assistant uses one tool for opposite jobs:
-`HassTurnOff` switches off a lamp and unlocks a lock. So the guard doesn't look
-at tool names. It works out which entities the call would land on, the same
-way Home Assistant does, and refuses if any is off limits:
+`HassTurnOff` switches off a lamp and unlocks a lock. So the guard ignores
+tool names and looks at where the call would land:
 
 ```
 on tool call(args):
     if args contain a name the guard has never seen: refuse, naming it
-    targets = match(args) exactly as HA's handler would (name "all" = no name)
+    targets = match(args) exactly as HA's handler would
     if any target is a lock, alarm panel, or door/garage cover: refuse
     else: run the real tool
 ```
 
-This only sees calls that arrive through the restricted API. The same token
-can also call the REST API, the plain Assist API at `/api/mcp/assist`, and run
-exposed scripts, none of which pass through it.
+It only sees calls that come through the restricted API. The same token can
+also use the REST API, the plain Assist API, and exposed scripts.
 
-**Layer 2: the user group.** Home Assistant checks the calling user's group
-policy on every entity action, on every route. Policies can only allow, never
-deny, so the integration builds one that allows control of everything except
-the forbidden entities and keeps "everything else" read-only:
+**Layer 2: the user group.** Home Assistant checks the calling user's
+permissions on every entity action, whatever the route. Policies can only
+allow, never deny, so the group grants control of everything except the
+forbidden things and leaves the rest read-only:
 
 ```
-policy:
-    domains:    every domain in the house except lock, alarm_control_panel,
-                cover and automation                              -> read + control
-    entity_ids: every cover that is not a door or garage          -> read + control
-    all:                                                          -> read only
+domains:    everything except lock, alarm_control_panel, cover, automation  -> control
+entity_ids: covers that are not doors or garages                            -> control
+all:                                                                        -> read
 ```
 
-Automations are withheld because their actions run with no user attached, so
-Home Assistant never permission-checks them; letting Hermes trigger one would
-be a way around the policy. Scripts and scenes carry Hermes's user and are
-checked action by action, so those stay controllable.
+Automations are on the withheld list because their actions run with no user,
+so Home Assistant never checks them. Scripts and scenes run as Hermes and are
+checked step by step.
 
-The policy is rebuilt when a cover or a new domain appears, the user you
-picked is moved into the group and nobody else, and the group is removed
-again when no entry manages a user. If an administrator edits that user in
-Settings, the integration notices and puts it back. Home Assistant has no UI
-for custom groups, so this relies on a few internal names in the auth store;
-if a future Home Assistant renames them, a repair tells you and layer 1 keeps
-working.
+The integration keeps this up to date on its own: new entities are added, an
+admin editing the user in Settings is noticed and undone, and the group is
+removed when no entry uses it. It relies on a few internal names in Home
+Assistant's auth store; if those ever change, you get a repair and layer 1
+carries on.
 
-What is still on you:
+**What is still on you**
 
-- Pick the user in the integration's options. Without that, only layer 1
-  applies. Only a plain member of the Users group can be picked; admins and
-  Viewers are refused, since the move would change what they may do.
-- Remove the config entry before uninstalling the integration. Otherwise the
-  user stays in a group nobody maintains.
-- Services that don't target entities are never permission-checked by Home
-  Assistant: `shell_command`, `rest_command`, legacy `notify`, persistent
-  notifications. Don't define one that unlocks a door.
-- Only device class tells a cover from a door. A gate, a cover with no device
-  class wrapping a garage door, a door strike wired to a `switch`, an `update`
-  install or a reboot `button` are all controllable. Home Assistant's model
-  cannot express those; keep such entities unexposed or off the account.
+| Do | Because |
+|---|---|
+| Pick the Hermes user in the integration's options | Without it only layer 1 applies. Admins and Viewers can't be picked |
+| Remove the entry before uninstalling | Otherwise the user stays in a group nobody maintains |
+| Don't write a `shell_command`, `rest_command` or notify service that unlocks a door | Those never carry a target, so Home Assistant never checks them |
+| Keep gates, door strikes on switches, and covers without a device class off the account | Only device class tells a door from a blind |
 
 ## Checking it works
 

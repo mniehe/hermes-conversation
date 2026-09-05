@@ -11,6 +11,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
 from custom_components.hermes_conversation.const import (
+    CONF_HOUSE_STATE,
     CONF_SESSION_TIMEOUT,
     DOMAIN,
     SESSION_ID_HEADER,
@@ -172,7 +173,7 @@ async def test_live_session_sends_only_newest_turn(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
 ) -> None:
     """Hermes ignores body history for a continued session; do not send it."""
-    entry = await load_entry({CONF_PROMPT: "Be terse."})
+    entry = await load_entry({CONF_HOUSE_STATE: False, CONF_PROMPT: "Be terse."})
     aioclient_mock.post(COMPLETIONS_URL, content=sse.reply("ok"))
 
     result = await _converse(hass, entry, "hello", satellite_id=KITCHEN)
@@ -185,16 +186,15 @@ async def test_live_session_sends_only_newest_turn(
     )
 
     messages = aioclient_mock.mock_calls[-1][2]["messages"]
-    assert messages == [
-        {"role": "system", "content": "Be terse."},
-        {"role": "user", "content": "and then"},
-    ]
+    assert [m["role"] for m in messages] == ["system", "user"]
+    assert messages[0]["content"].startswith("Be terse.\n\nCurrent time: ")
+    assert messages[1] == {"role": "user", "content": "and then"}
 
 
 async def test_disabled_continuity_replays_chat_log(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
 ) -> None:
-    entry = await load_entry({CONF_SESSION_TIMEOUT: 0})
+    entry = await load_entry({CONF_HOUSE_STATE: False, CONF_SESSION_TIMEOUT: 0})
     aioclient_mock.post(COMPLETIONS_URL, content=sse.reply("ok"))
 
     result = await _converse(hass, entry, "hello", satellite_id=KITCHEN)
@@ -208,7 +208,8 @@ async def test_disabled_continuity_replays_chat_log(
 
     assert _session_header(aioclient_mock) is None
     messages = aioclient_mock.mock_calls[-1][2]["messages"]
-    assert [m["content"] for m in messages] == ["hello", "ok", "and then"]
+    assert messages[0]["role"] == "system"
+    assert [m["content"] for m in messages[1:]] == ["hello", "ok", "and then"]
 
 
 async def test_reload_starts_fresh_sessions(

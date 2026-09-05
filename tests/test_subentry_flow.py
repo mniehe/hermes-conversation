@@ -11,6 +11,7 @@ from custom_components.hermes_conversation.config_flow import (
     HermesConversationConfigFlow,
 )
 from custom_components.hermes_conversation.const import (
+    CONF_HOUSE_STATE,
     CONF_SESSION_TIMEOUT,
     DEFAULT_PROMPT,
     DOMAIN,
@@ -180,3 +181,28 @@ async def test_stored_model_stays_selectable(
     schema = result["data_schema"].schema
     model_field = next(key for key in schema if str(key) == CONF_MODEL)
     assert schema[model_field].config["options"] == ["smart", "home-assist"]
+
+
+async def test_house_state_toggle_is_stored(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
+) -> None:
+    entry = await load_entry()
+    subentry_id = next(iter(entry.subentries))
+
+    result = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, SUBENTRY_TYPE_CONVERSATION),
+        context={"source": "reconfigure", "subentry_id": subentry_id},
+    )
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"],
+        {
+            CONF_NAME: "Hermes",
+            CONF_MODEL: "hermes-agent",
+            CONF_TIMEOUT: 120,
+            CONF_HOUSE_STATE: False,
+        },
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert entry.subentries[subentry_id].data[CONF_HOUSE_STATE] is False

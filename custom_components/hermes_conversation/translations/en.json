@@ -66,12 +66,14 @@
             "name": "Name",
             "model": "Model",
             "prompt": "System prompt",
+            "house_state": "Include house state",
             "timeout": "Timeout (seconds)",
             "session_timeout": "Session idle timeout (minutes)"
           },
           "data_description": {
             "model": "Which of the models the profile advertises this agent uses. The entry named after the profile means its own default.",
             "prompt": "Prepended to every conversation. Templates are supported, with ha_name, user_name, satellite_id, satellite_name and area_name available.",
+            "house_state": "Appends the state of every entity exposed to Assist to the end of the system prompt on every turn, so simple questions are answered without a tool call. The current time is always appended.",
             "timeout": "How long to wait for a reply before giving up.",
             "session_timeout": "How long a satellite can stay quiet before its next request starts a fresh Hermes session. 0 starts a new session on every turn."
           }
@@ -82,12 +84,14 @@
             "name": "Name",
             "model": "Model",
             "prompt": "System prompt",
+            "house_state": "Include house state",
             "timeout": "Timeout (seconds)",
             "session_timeout": "Session idle timeout (minutes)"
           },
           "data_description": {
             "model": "Which of the models the profile advertises this agent uses. The entry named after the profile means its own default.",
             "prompt": "Prepended to every conversation. Templates are supported, with ha_name, user_name, satellite_id, satellite_name and area_name available.",
+            "house_state": "Appends the state of every entity exposed to Assist to the end of the system prompt on every turn, so simple questions are answered without a tool call. The current time is always appended.",
             "timeout": "How long to wait for a reply before giving up.",
             "session_timeout": "How long a satellite can stay quiet before its next request starts a fresh Hermes session. 0 starts a new session on every turn."
           }

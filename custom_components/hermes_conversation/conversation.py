@@ -19,8 +19,10 @@ from . import HermesConfigEntry
 from .client import HermesAuthError, HermesConnectionError
 from .const import (
     CONF_BASE_URL,
+    CONF_HOUSE_STATE,
     CONF_PROFILE,
     CONF_SESSION_TIMEOUT,
+    DEFAULT_HOUSE_STATE,
     DEFAULT_MODEL,
     DEFAULT_SESSION_TIMEOUT,
     DOMAIN,
@@ -29,6 +31,7 @@ from .const import (
     SECONDS_PER_MINUTE,
     SUBENTRY_TYPE_CONVERSATION,
 )
+from .house import clock_line, house_block
 from .satellites import area_name
 from .session import SessionTracker
 
@@ -46,6 +49,14 @@ def _satellite_context(hass: HomeAssistant, satellite_id: str | None) -> dict[st
         "satellite_name": state.name if state else None,
         "area_name": area_name(hass, satellite_id),
     }
+
+
+def _append_system(messages: list[dict[str, str]], text: str, separator: str) -> None:
+    """Add text to the system message, creating one if the prompt is empty."""
+    if messages:
+        messages[0]["content"] += f"{separator}{text}"
+    else:
+        messages.append({"role": "system", "content": text})
 
 
 async def _transform_stream(
@@ -231,14 +242,15 @@ class HermesConversationEntity(
             )
 
         if user_input.extra_system_prompt:
-            if messages:
-                messages[0]["content"] += f"\n{user_input.extra_system_prompt}"
-            else:
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": user_input.extra_system_prompt,
-                    }
-                )
+            _append_system(messages, user_input.extra_system_prompt, "\n")
+
+        # Last on purpose: Hermes puts its own prompt ahead of this message and
+        # providers cache by prefix, so only what follows the clock is recomputed.
+        tail = [clock_line()]
+        if self.subentry.data.get(CONF_HOUSE_STATE, DEFAULT_HOUSE_STATE):
+            house = house_block(self.hass)
+            _LOGGER.debug("House state block is %d characters", len(house))
+            tail.append(house)
+        _append_system(messages, "\n".join(tail), "\n\n")
 
         return messages

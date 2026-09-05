@@ -18,6 +18,7 @@ from homeassistant.config_entries import (
 from homeassistant.const import CONF_MODEL, CONF_NAME, CONF_PROMPT, CONF_TIMEOUT
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
+    BooleanSelector,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
@@ -36,10 +37,13 @@ from .const import (
     CONF_API_KEY,
     CONF_BASE_URL,
     CONF_HERMES_USER,
+    CONF_HOUSE_STATE,
     CONF_PROFILE,
     CONF_SESSION_TIMEOUT,
+    CONFIG_MINOR_VERSION,
     DEFAULT_BASE_URL,
     DEFAULT_CONVERSATION_NAME,
+    DEFAULT_HOUSE_STATE,
     DEFAULT_MODEL,
     DEFAULT_PROFILE,
     DEFAULT_PROMPT,
@@ -97,6 +101,7 @@ class HermesConversationConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Hermes Conversation."""
 
     VERSION = 1
+    MINOR_VERSION = CONFIG_MINOR_VERSION
 
     @classmethod
     @callback
@@ -134,7 +139,10 @@ class HermesConversationConfigFlow(ConfigFlow, domain=DOMAIN):
                     subentries=[
                         {
                             "subentry_type": SUBENTRY_TYPE_CONVERSATION,
-                            "data": {CONF_PROMPT: DEFAULT_PROMPT},
+                            "data": {
+                                CONF_PROMPT: DEFAULT_PROMPT,
+                                CONF_HOUSE_STATE: DEFAULT_HOUSE_STATE,
+                            },
                             "title": DEFAULT_CONVERSATION_NAME,
                             "unique_id": None,
                         }
@@ -315,6 +323,9 @@ class HermesSubentryFlowHandler(ConfigSubentryFlow):
                     SelectSelectorConfig(options=models, custom_value=False)
                 ),
                 vol.Optional(CONF_PROMPT, default=DEFAULT_PROMPT): TemplateSelector(),
+                vol.Required(
+                    CONF_HOUSE_STATE, default=DEFAULT_HOUSE_STATE
+                ): BooleanSelector(),
                 vol.Required(CONF_TIMEOUT, default=REQUEST_TIMEOUT): NumberSelector(
                     NumberSelectorConfig(
                         min=MIN_TIMEOUT, max=MAX_TIMEOUT, mode=NumberSelectorMode.BOX

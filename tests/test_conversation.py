@@ -16,11 +16,30 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
 from custom_components.hermes_conversation.client import HermesClient
-from custom_components.hermes_conversation.const import DOMAIN
+from custom_components.hermes_conversation.const import (
+    CONF_HOUSE_STATE,
+    CONF_SESSION_TIMEOUT,
+    DOMAIN,
+)
+from custom_components.hermes_conversation.house import CLOCK_PREFIX, HEADER
 
 from . import sse
-from .conftest import EntryLoader
+from .conftest import EntryLoader, expose
 from .const import COMPLETIONS_URL, PROFILE
+
+# The house-state block is on by default; tests that pin the exact system
+# message switch it off. The clock is always appended, so they read the
+# prompt part through _prompt().
+NO_HOUSE = {CONF_HOUSE_STATE: False}
+CLOCK_MARKER = f"\n\n{CLOCK_PREFIX}"
+
+
+def _prompt(messages: list[dict[str, str]]) -> str:
+    """Return the system message without the trailing clock line."""
+    assert messages[0]["role"] == "system"
+    prompt, marker, _ = messages[0]["content"].rpartition(CLOCK_MARKER)
+    assert marker
+    return prompt
 
 
 def _reply(text: str) -> bytes:
@@ -167,36 +186,35 @@ async def test_configured_model_is_sent(
 async def test_configured_prompt_leads_the_transcript(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
 ) -> None:
-    entry = await load_entry({CONF_PROMPT: "You are terse."})
+    entry = await load_entry({**NO_HOUSE, CONF_PROMPT: "You are terse."})
     aioclient_mock.post(COMPLETIONS_URL, content=_reply("ok"))
 
     await _converse(hass, "hello", _entity_id(hass, entry))
 
     messages = aioclient_mock.mock_calls[-1][2]["messages"]
-    assert messages[0] == {"role": "system", "content": "You are terse."}
+    assert _prompt(messages) == "You are terse."
     assert messages[-1]["role"] == "user"
 
 
 async def test_configured_prompt_is_rendered(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
 ) -> None:
-    entry = await load_entry({CONF_PROMPT: "You are in {{ ha_name }}."})
+    entry = await load_entry({**NO_HOUSE, CONF_PROMPT: "You are in {{ ha_name }}."})
     aioclient_mock.post(COMPLETIONS_URL, content=_reply("ok"))
 
     await _converse(hass, "hello", _entity_id(hass, entry))
 
     messages = aioclient_mock.mock_calls[-1][2]["messages"]
-    assert messages[0] == {
-        "role": "system",
-        "content": f"You are in {hass.config.location_name}.",
-    }
+    assert _prompt(messages) == f"You are in {hass.config.location_name}."
 
 
 async def test_configured_prompt_receives_user_name(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
 ) -> None:
     user = await hass.auth.async_create_user("Mark")
-    entry = await load_entry({CONF_PROMPT: "You are helping {{ user_name }}."})
+    entry = await load_entry(
+        {**NO_HOUSE, CONF_PROMPT: "You are helping {{ user_name }}."}
+    )
     aioclient_mock.post(COMPLETIONS_URL, content=_reply("ok"))
 
     await _converse(
@@ -207,16 +225,13 @@ async def test_configured_prompt_receives_user_name(
     )
 
     messages = aioclient_mock.mock_calls[-1][2]["messages"]
-    assert messages[0] == {
-        "role": "system",
-        "content": "You are helping Mark.",
-    }
+    assert _prompt(messages) == "You are helping Mark."
 
 
 async def test_extra_system_prompt_is_sent(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
 ) -> None:
-    entry = await load_entry()
+    entry = await load_entry(NO_HOUSE)
     aioclient_mock.post(COMPLETIONS_URL, content=_reply("ok"))
 
     await _converse(
@@ -227,22 +242,21 @@ async def test_extra_system_prompt_is_sent(
     )
 
     messages = aioclient_mock.mock_calls[-1][2]["messages"]
-    assert messages[0] == {
-        "role": "system",
-        "content": "This request came from the kitchen satellite.",
-    }
+    assert _prompt(messages) == "This request came from the kitchen satellite."
 
 
-async def test_no_prompt_sends_no_system_message(
+async def test_no_prompt_still_sends_the_clock(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
 ) -> None:
-    entry = await load_entry()
+    entry = await load_entry(NO_HOUSE)
     aioclient_mock.post(COMPLETIONS_URL, content=_reply("ok"))
 
     await _converse(hass, "hello", _entity_id(hass, entry))
 
     messages = aioclient_mock.mock_calls[-1][2]["messages"]
-    assert not [msg for msg in messages if msg["role"] == "system"]
+    assert messages[0]["role"] == "system"
+    assert messages[0]["content"].startswith(CLOCK_PREFIX)
+    assert HEADER not in messages[0]["content"]
 
 
 async def test_configured_timeout_is_applied(
@@ -291,7 +305,10 @@ async def test_prompt_receives_satellite(
         satellite.entity_id, "idle", {"friendly_name": "Kitchen Satellite"}
     )
     entry = await load_entry(
-        {CONF_PROMPT: "{{ satellite_id }} / {{ satellite_name }} / {{ area_name }}"}
+        {
+            **NO_HOUSE,
+            CONF_PROMPT: "{{ satellite_id }} / {{ satellite_name }} / {{ area_name }}",
+        }
     )
     aioclient_mock.post(COMPLETIONS_URL, content=_reply("ok"))
 
@@ -305,9 +322,7 @@ async def test_prompt_receives_satellite(
     )
 
     messages = aioclient_mock.mock_calls[-1][2]["messages"]
-    assert messages[0]["content"] == (
-        "assist_satellite.kitchen / Kitchen Satellite / Kitchen"
-    )
+    assert _prompt(messages) == "assist_satellite.kitchen / Kitchen Satellite / Kitchen"
 
 
 async def test_prompt_satellite_area_comes_from_device(
@@ -328,7 +343,7 @@ async def test_prompt_satellite_area_comes_from_device(
         suggested_object_id="office",
         device_id=device.id,
     )
-    entry = await load_entry({CONF_PROMPT: "{{ area_name }}"})
+    entry = await load_entry({**NO_HOUSE, CONF_PROMPT: "{{ area_name }}"})
     aioclient_mock.post(COMPLETIONS_URL, content=_reply("ok"))
 
     await conversation.async_converse(
@@ -340,20 +355,101 @@ async def test_prompt_satellite_area_comes_from_device(
         satellite_id=satellite.entity_id,
     )
 
-    assert aioclient_mock.mock_calls[-1][2]["messages"][0]["content"] == "Office"
+    assert _prompt(aioclient_mock.mock_calls[-1][2]["messages"]) == "Office"
 
 
 async def test_prompt_without_satellite_renders_blank(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
 ) -> None:
     entry = await load_entry(
-        {CONF_PROMPT: "[{{ satellite_id }}][{{ satellite_name }}][{{ area_name }}]"}
+        {
+            **NO_HOUSE,
+            CONF_PROMPT: "[{{ satellite_id }}][{{ satellite_name }}][{{ area_name }}]",
+        }
     )
     aioclient_mock.post(COMPLETIONS_URL, content=_reply("ok"))
 
     await _converse(hass, "hello", _entity_id(hass, entry))
 
-    assert (
-        aioclient_mock.mock_calls[-1][2]["messages"][0]["content"]
-        == "[None][None][None]"
+    assert _prompt(aioclient_mock.mock_calls[-1][2]["messages"]) == "[None][None][None]"
+
+
+async def test_house_state_trails_the_prompt(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
+) -> None:
+    expose(hass, "light.kitchen", "Kitchen Lights", "on")
+    entry = await load_entry({CONF_PROMPT: "You are terse."})
+    aioclient_mock.post(COMPLETIONS_URL, content=_reply("ok"))
+
+    await _converse(hass, "hello", _entity_id(hass, entry))
+
+    content = aioclient_mock.mock_calls[-1][2]["messages"][0]["content"]
+    assert content.startswith(f"You are terse.\n\n{CLOCK_PREFIX}")
+    assert content.endswith(f"\n{HEADER}\nNo area:\n  Kitchen Lights: on")
+
+
+async def test_house_state_without_prompt_stands_alone(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
+) -> None:
+    entry = await load_entry()
+    aioclient_mock.post(COMPLETIONS_URL, content=_reply("ok"))
+
+    await _converse(hass, "hello", _entity_id(hass, entry))
+
+    messages = aioclient_mock.mock_calls[-1][2]["messages"]
+    assert messages[0]["role"] == "system"
+    assert messages[0]["content"].startswith(CLOCK_PREFIX)
+    assert HEADER in messages[0]["content"]
+
+
+async def test_house_state_changes_only_the_tail(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    load_entry: EntryLoader,
+    freezer,
+) -> None:
+    """The block must stay behind the prompt: whatever precedes it is cacheable."""
+    expose(hass, "light.kitchen", "Kitchen Lights", "on")
+    entry = await load_entry({CONF_PROMPT: "You are the house at {{ ha_name }}."})
+    aioclient_mock.post(COMPLETIONS_URL, content=_reply("ok"))
+
+    await _converse(hass, "hello", _entity_id(hass, entry))
+    first = aioclient_mock.mock_calls[-1][2]["messages"][0]["content"]
+
+    freezer.tick(90)
+    hass.states.async_set("light.kitchen", "off", {"friendly_name": "Kitchen Lights"})
+    await _converse(hass, "hello again", _entity_id(hass, entry))
+    second = aioclient_mock.mock_calls[-1][2]["messages"][0]["content"]
+
+    marker = "\n\nCurrent time: "
+    assert first.split(marker)[0] == second.split(marker)[0]
+    assert first != second
+    assert second.endswith("Kitchen Lights: off")
+
+
+async def test_house_state_follows_the_pipeline_prompt(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
+) -> None:
+    entry = await load_entry({CONF_PROMPT: "You are terse."})
+    aioclient_mock.post(COMPLETIONS_URL, content=_reply("ok"))
+
+    await _converse(
+        hass, "hello", _entity_id(hass, entry), extra_system_prompt="From the kitchen."
     )
+
+    content = aioclient_mock.mock_calls[-1][2]["messages"][0]["content"]
+    assert content.startswith(f"You are terse.\nFrom the kitchen.\n\n{CLOCK_PREFIX}")
+
+
+async def test_house_state_is_sent_on_the_replay_path(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
+) -> None:
+    entry = await load_entry({CONF_PROMPT: "You are terse.", CONF_SESSION_TIMEOUT: 0})
+    aioclient_mock.post(COMPLETIONS_URL, content=_reply("ok"))
+
+    await _converse(hass, "hello", _entity_id(hass, entry))
+
+    messages = aioclient_mock.mock_calls[-1][2]["messages"]
+    assert messages[0]["role"] == "system"
+    assert "\n\nCurrent time: " in messages[0]["content"]
+    assert messages[-1] == {"role": "user", "content": "hello"}

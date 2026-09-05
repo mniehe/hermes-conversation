@@ -5,8 +5,10 @@ from http import HTTPStatus
 from typing import Any
 
 import pytest
+from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
 from homeassistant.config_entries import ConfigSubentryData
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
@@ -16,6 +18,7 @@ from custom_components.hermes_conversation.const import (
     CONF_API_KEY,
     CONF_BASE_URL,
     CONF_PROFILE,
+    CONFIG_MINOR_VERSION,
     DOMAIN,
     SUBENTRY_TYPE_CONVERSATION,
 )
@@ -27,6 +30,28 @@ PROBE_URL = f"{BASE_URL}/p/{PROBE_PROFILE}/v1/models"
 ENTRY_DATA = {CONF_BASE_URL: BASE_URL, CONF_PROFILE: PROFILE, CONF_API_KEY: API_KEY}
 
 type EntryLoader = Callable[..., Coroutine[Any, Any, MockConfigEntry]]
+
+ASSISTANT = "conversation"
+
+
+def expose(
+    hass: HomeAssistant,
+    entity_id: str,
+    name: str,
+    state: str,
+    area_id: str | None = None,
+    **attrs: Any,
+) -> None:
+    """Register an entity, give it a state, and expose it to Assist."""
+    domain, object_id = entity_id.split(".")
+    registry = er.async_get(hass)
+    entry = registry.async_get_or_create(
+        domain, "test", object_id, suggested_object_id=object_id, original_name=name
+    )
+    if area_id:
+        registry.async_update_entity(entry.entity_id, area_id=area_id)
+    hass.states.async_set(entry.entity_id, state, {"friendly_name": name, **attrs})
+    async_expose_entity(hass, ASSISTANT, entry.entity_id, True)
 
 
 @pytest.fixture(autouse=True)
@@ -49,11 +74,13 @@ def load_entry(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> Entr
         agent_options: dict[str, Any] | None = None,
         agent_title: str = "Hermes",
         options: dict[str, Any] | None = None,
+        minor_version: int = CONFIG_MINOR_VERSION,
     ) -> MockConfigEntry:
         entry = MockConfigEntry(
             domain=DOMAIN,
             data=ENTRY_DATA,
             options=options or {},
+            minor_version=minor_version,
             unique_id=f"{BASE_URL}#{PROFILE}",
             title=f"Hermes {PROFILE}",
             subentries_data=[

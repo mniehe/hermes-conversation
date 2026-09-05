@@ -44,21 +44,43 @@ SECONDS_PER_MINUTE: Final = 60
 
 # Pre-filled for new agents as a worked example of the template variables;
 # spoken replies need different manners from typed ones.
+_PROMPT_LEAD: Final = (
+    "You are the voice of the house at {{ ha_name }}. Your reply is spoken "
+    "aloud, so answer in one or two short plain sentences with no lists, "
+    "markdown, or emoji. Do not narrate what you are doing.",
+    "{% if user_name %}You are talking to {{ user_name }}.{% endif %}",
+    "{% if satellite_id %}The request came from "
+    "{{ satellite_name or satellite_id }}"
+    "{% if area_name %} in the {{ area_name }}{% endif %}. "
+    'When a command names no room, assume the {{ area_name or "same" }} area. '
+    "Send any announcements to {{ satellite_id }}.{% endif %}",
+)
 DEFAULT_PROMPT: Final = "\n".join(
     (
-        "You are the voice of the house at {{ ha_name }}. Your reply is spoken "
-        "aloud, so answer in one or two short plain sentences with no lists, "
-        "markdown, or emoji. Do not narrate what you are doing.",
-        "{% if user_name %}You are talking to {{ user_name }}.{% endif %}",
-        "{% if satellite_id %}The request came from "
-        "{{ satellite_name or satellite_id }}"
-        "{% if area_name %} in the {{ area_name }}{% endif %}. "
-        'When a command names no room, assume the {{ area_name or "same" }} area. '
-        "Send any announcements to {{ satellite_id }}.{% endif %}",
+        *_PROMPT_LEAD,
+        "The current time and the state of the house are listed at the end of "
+        "these instructions. Answer from them directly. Call tools only to act "
+        "or when what you need is not listed, and confirm briefly after acting.",
+    )
+)
+# What agents were given before the house-state block existed. An upgrade
+# uses it to tell an untouched prompt from a customised one.
+LEGACY_PROMPT: Final = "\n".join(
+    (
+        *_PROMPT_LEAD,
         "Use the Home Assistant tools to check state before answering questions "
         "about the house, and confirm briefly after acting.",
     )
 )
+
+# Appended after the prompt on every turn, behind the clock that is always
+# sent: the state of every entity exposed to Assist, so simple questions need
+# no tool call.
+CONF_HOUSE_STATE: Final = "house_state"
+DEFAULT_HOUSE_STATE: Final = True
+
+# Config entry minor version that introduced CONF_HOUSE_STATE on agents.
+CONFIG_MINOR_VERSION: Final = 2
 
 # Whole domains the agent may never write to. Alarm panels are included even
 # though today's Assist tools cannot reach them: the boundary should already

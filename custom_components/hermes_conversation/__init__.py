@@ -9,8 +9,9 @@ from homeassistant.config_entries import (
     ConfigEntry,
     ConfigEntryChange,
     ConfigEntryState,
+    ConfigSubentry,
 )
-from homeassistant.const import Platform
+from homeassistant.const import CONF_PROMPT, Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import issue_registry as ir
@@ -21,9 +22,14 @@ from .client import HermesAuthError, HermesClient, HermesConnectionError
 from .const import (
     CONF_API_KEY,
     CONF_BASE_URL,
+    CONF_HOUSE_STATE,
     CONF_PROFILE,
+    CONFIG_MINOR_VERSION,
+    DEFAULT_PROMPT,
     DOMAIN,
     ISSUE_PROFILE_IGNORED,
+    LEGACY_PROMPT,
+    SUBENTRY_TYPE_CONVERSATION,
 )
 from .llm import MCP_SERVER_DOMAIN, async_check_mcp_server, async_register_api
 from .policy import (
@@ -101,6 +107,44 @@ async def async_setup_entry(hass: HomeAssistant, entry: HermesConfigEntry) -> bo
 async def async_unload_entry(hass: HomeAssistant, entry: HermesConfigEntry) -> bool:
     """Unload a Hermes Conversation config entry."""
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Bring an entry written by an older release up to date."""
+    if entry.minor_version < CONFIG_MINOR_VERSION:
+        for subentry in entry.subentries.values():
+            _migrate_house_state(hass, entry, subentry)
+
+    hass.config_entries.async_update_entry(entry, minor_version=CONFIG_MINOR_VERSION)
+    return True
+
+
+def _migrate_house_state(
+    hass: HomeAssistant, entry: ConfigEntry, subentry: ConfigSubentry
+) -> None:
+    """Turn the house-state block on only where the prompt was never touched.
+
+    An agent still on the shipped prompt gets the new default and the block.
+    A customised prompt is left alone with the block off, so an upgrade never
+    changes what a tuned agent is sent.
+    """
+    if subentry.subentry_type != SUBENTRY_TYPE_CONVERSATION:
+        return
+    if CONF_HOUSE_STATE in subentry.data:
+        return
+
+    data = dict(subentry.data)
+    if _same_words(data.get(CONF_PROMPT, ""), LEGACY_PROMPT):
+        data[CONF_PROMPT] = DEFAULT_PROMPT
+        data[CONF_HOUSE_STATE] = True
+    else:
+        data[CONF_HOUSE_STATE] = False
+    hass.config_entries.async_update_subentry(entry, subentry, data=data)
+
+
+def _same_words(left: str, right: str) -> bool:
+    """Compare prompts ignoring how they were wrapped when pasted."""
+    return left.split() == right.split()
 
 
 async def _async_check_profile_routing(

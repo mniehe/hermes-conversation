@@ -9,7 +9,7 @@ requires-python = ">=3.14.2"
 
 [dependency-groups]
 dev = [
-  "pytest-homeassistant-custom-component==0.13.356",
+  "pytest-homeassistant-custom-component==0.13.359",
   # Requirements of the `conversation` component we depend on; pytest-hacc
   # installs Home Assistant but not the components' own requirements.
   "hassil==3.12.0",

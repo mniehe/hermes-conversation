@@ -11,7 +11,7 @@ from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers import intent
+from homeassistant.helpers import intent, template
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
@@ -19,6 +19,7 @@ from custom_components.hermes_conversation.client import HermesClient
 from custom_components.hermes_conversation.const import (
     CONF_HOUSE_STATE,
     CONF_SESSION_TIMEOUT,
+    DEFAULT_PROMPT,
     DOMAIN,
 )
 from custom_components.hermes_conversation.house import CLOCK_PREFIX, HEADER
@@ -453,3 +454,15 @@ async def test_house_state_is_sent_on_the_replay_path(
     assert messages[0]["role"] == "system"
     assert "\n\nCurrent time: " in messages[0]["content"]
     assert messages[-1] == {"role": "user", "content": "hello"}
+
+
+async def test_default_prompt_previews_without_warnings(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The editor renders the template with no variables and shows any warning."""
+    rendered = template.Template(DEFAULT_PROMPT, hass).async_render(
+        {}, parse_result=False
+    )
+
+    assert "undefined" not in caplog.text
+    assert rendered.startswith("You are the voice of the house at .")

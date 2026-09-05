@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from homeassistant.config_entries import (
     SIGNAL_CONFIG_ENTRY_CHANGED,
     ConfigEntry,
     ConfigEntryChange,
     ConfigEntryState,
-    ConfigSubentry,
 )
 from homeassistant.const import CONF_PROMPT, Platform
 from homeassistant.core import HomeAssistant, callback
@@ -28,8 +28,11 @@ from .const import (
     DEFAULT_PROMPT,
     DOMAIN,
     ISSUE_PROFILE_IGNORED,
-    LEGACY_PROMPT,
+    MINOR_VERSION_GUARDED_PROMPT,
+    MINOR_VERSION_HOUSE_STATE,
+    PROMPT_BEFORE_HOUSE_STATE,
     SUBENTRY_TYPE_CONVERSATION,
+    SUPERSEDED_PROMPTS,
 )
 from .llm import MCP_SERVER_DOMAIN, async_check_mcp_server, async_register_api
 from .policy import (
@@ -111,35 +114,39 @@ async def async_unload_entry(hass: HomeAssistant, entry: HermesConfigEntry) -> b
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Bring an entry written by an older release up to date."""
-    if entry.minor_version < CONFIG_MINOR_VERSION:
-        for subentry in entry.subentries.values():
-            _migrate_house_state(hass, entry, subentry)
+    for subentry in entry.subentries.values():
+        if subentry.subentry_type != SUBENTRY_TYPE_CONVERSATION:
+            continue
+
+        data = dict(subentry.data)
+        if entry.minor_version < MINOR_VERSION_HOUSE_STATE:
+            _add_house_state(data)
+        if entry.minor_version < MINOR_VERSION_GUARDED_PROMPT:
+            _refresh_default_prompt(data)
+        if data != dict(subentry.data):
+            hass.config_entries.async_update_subentry(entry, subentry, data=data)
 
     hass.config_entries.async_update_entry(entry, minor_version=CONFIG_MINOR_VERSION)
     return True
 
 
-def _migrate_house_state(
-    hass: HomeAssistant, entry: ConfigEntry, subentry: ConfigSubentry
-) -> None:
+def _add_house_state(data: dict[str, Any]) -> None:
     """Turn the house-state block on only where the prompt was never touched.
 
-    An agent still on the shipped prompt gets the new default and the block.
-    A customised prompt is left alone with the block off, so an upgrade never
+    A customised prompt gets the block switched off, so an upgrade never
     changes what a tuned agent is sent.
     """
-    if subentry.subentry_type != SUBENTRY_TYPE_CONVERSATION:
+    if CONF_HOUSE_STATE in data:
         return
-    if CONF_HOUSE_STATE in subentry.data:
-        return
+    untouched = _same_words(data.get(CONF_PROMPT, ""), PROMPT_BEFORE_HOUSE_STATE)
+    data[CONF_HOUSE_STATE] = untouched
 
-    data = dict(subentry.data)
-    if _same_words(data.get(CONF_PROMPT, ""), LEGACY_PROMPT):
+
+def _refresh_default_prompt(data: dict[str, Any]) -> None:
+    """Replace a prompt still on an earlier shipped default with the current one."""
+    prompt = data.get(CONF_PROMPT, "")
+    if any(_same_words(prompt, old) for old in SUPERSEDED_PROMPTS):
         data[CONF_PROMPT] = DEFAULT_PROMPT
-        data[CONF_HOUSE_STATE] = True
-    else:
-        data[CONF_HOUSE_STATE] = False
-    hass.config_entries.async_update_subentry(entry, subentry, data=data)
 
 
 def _same_words(left: str, right: str) -> bool:

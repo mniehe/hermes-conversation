@@ -14,6 +14,8 @@ SESSION_ID_PREFIX = "ha-"
 class _Session:
     session_id: str
     last_used: float
+    snapshot: str | None = None
+    snapshot_taken: float = 0.0
 
 
 class SessionTracker:
@@ -61,6 +63,21 @@ class SessionTracker:
     def reset(self, origin: str) -> None:
         """Forget ``origin``'s session so its next turn starts a fresh one."""
         self._sessions.pop(origin, None)
+
+    def snapshot_for(self, origin: str, take: Callable[[], str], max_age: float) -> str:
+        """Return the session's saved snapshot, retaking it once ``max_age`` old.
+
+        Without a live session for ``origin`` every call takes a fresh one.
+        """
+        session = self._sessions.get(origin)
+        if session is None:
+            return take()
+
+        now = self._clock()
+        if session.snapshot is None or now - session.snapshot_taken >= max_age:
+            session.snapshot = take()
+            session.snapshot_taken = now
+        return session.snapshot
 
     def _prune(self, now: float) -> None:
         expired = [

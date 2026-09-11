@@ -19,13 +19,14 @@ from custom_components.hermes_conversation.const import (
     RESET_REPLY,
     SESSION_ID_HEADER,
 )
+from custom_components.hermes_conversation.house import CLOCK_PREFIX
 from custom_components.hermes_conversation.session import (
     SESSION_ID_PREFIX,
     SessionTracker,
 )
 
 from . import sse
-from .conftest import EntryLoader
+from .conftest import EntryLoader, expose
 from .const import COMPLETIONS_URL
 
 KITCHEN = "assist_satellite.kitchen"
@@ -98,6 +99,62 @@ def test_tracker_reset_leaves_other_origins() -> None:
     tracker.reset(KITCHEN)
 
     assert tracker.session_for(OFFICE) == office
+
+
+class Snapshots:
+    def __init__(self) -> None:
+        self.taken = 0
+
+    def __call__(self) -> str:
+        self.taken += 1
+        return f"snapshot {self.taken}"
+
+
+def test_snapshot_is_kept_for_the_session() -> None:
+    clock = FakeClock()
+    tracker = SessionTracker(600, clock)
+    take = Snapshots()
+
+    tracker.session_for(KITCHEN)
+    first = tracker.snapshot_for(KITCHEN, take, 60)
+    clock.now += 59
+
+    assert tracker.snapshot_for(KITCHEN, take, 60) == first
+    assert take.taken == 1
+
+
+def test_snapshot_is_retaken_once_old() -> None:
+    clock = FakeClock()
+    tracker = SessionTracker(600, clock)
+    take = Snapshots()
+
+    tracker.session_for(KITCHEN)
+    first = tracker.snapshot_for(KITCHEN, take, 60)
+    clock.now += 60
+
+    assert tracker.snapshot_for(KITCHEN, take, 60) != first
+
+
+def test_snapshot_without_a_session_is_always_fresh() -> None:
+    tracker = SessionTracker(600, FakeClock())
+    take = Snapshots()
+
+    tracker.snapshot_for(KITCHEN, take, 60)
+    tracker.snapshot_for(KITCHEN, take, 60)
+
+    assert take.taken == 2
+
+
+def test_new_session_takes_a_new_snapshot() -> None:
+    tracker = SessionTracker(600, FakeClock())
+    take = Snapshots()
+
+    tracker.session_for(KITCHEN)
+    first = tracker.snapshot_for(KITCHEN, take, 60)
+    tracker.reset(KITCHEN)
+    tracker.session_for(KITCHEN)
+
+    assert tracker.snapshot_for(KITCHEN, take, 60) != first
 
 
 def test_tracker_keeps_origins_apart() -> None:
@@ -225,8 +282,9 @@ async def test_live_session_sends_only_newest_turn(
 
     messages = aioclient_mock.mock_calls[-1][2]["messages"]
     assert [m["role"] for m in messages] == ["system", "user"]
-    assert messages[0]["content"].startswith("Be terse.\n\nCurrent time: ")
-    assert messages[1] == {"role": "user", "content": "and then"}
+    assert messages[0]["content"] == "Be terse."
+    assert messages[1]["content"].startswith(CLOCK_PREFIX)
+    assert messages[1]["content"].endswith("\nand then")
 
 
 async def test_disabled_continuity_replays_chat_log(
@@ -246,8 +304,72 @@ async def test_disabled_continuity_replays_chat_log(
 
     assert _session_header(aioclient_mock) is None
     messages = aioclient_mock.mock_calls[-1][2]["messages"]
+    assert [m["role"] for m in messages] == ["user", "assistant", "user"]
+    assert [m["content"] for m in messages[:2]] == ["hello", "ok"]
+    assert messages[2]["content"].startswith(CLOCK_PREFIX)
+    assert messages[2]["content"].endswith("\nand then")
+
+
+def _system(aioclient_mock: AiohttpClientMocker) -> str:
+    messages = aioclient_mock.mock_calls[-1][2]["messages"]
     assert messages[0]["role"] == "system"
-    assert [m["content"] for m in messages[1:]] == ["hello", "ok", "and then"]
+    return messages[0]["content"]
+
+
+async def test_house_snapshot_holds_for_the_session(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
+) -> None:
+    """A byte-identical system message keeps the transcript cached."""
+    expose(hass, "light.kitchen", "Kitchen Lights", "on")
+    entry = await load_entry({CONF_PROMPT: "Be terse."})
+    aioclient_mock.post(COMPLETIONS_URL, content=sse.reply("ok"))
+
+    await _converse(hass, entry, "hello", satellite_id=KITCHEN)
+    first = _system(aioclient_mock)
+    hass.states.async_set("light.kitchen", "off", {"friendly_name": "Kitchen Lights"})
+    await _converse(hass, entry, "and then", satellite_id=KITCHEN)
+
+    assert _system(aioclient_mock) == first
+    assert first.endswith("Kitchen Lights: on")
+
+
+async def test_new_session_sees_the_current_house(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
+) -> None:
+    expose(hass, "light.kitchen", "Kitchen Lights", "on")
+    entry = await load_entry({CONF_PROMPT: "Be terse."})
+    aioclient_mock.post(COMPLETIONS_URL, content=sse.reply("ok"))
+
+    await _converse(hass, entry, "hello", satellite_id=KITCHEN)
+    hass.states.async_set("light.kitchen", "off", {"friendly_name": "Kitchen Lights"})
+    await _converse(hass, entry, "new session", satellite_id=KITCHEN)
+    await _converse(hass, entry, "hello", satellite_id=KITCHEN)
+
+    assert _system(aioclient_mock).endswith("Kitchen Lights: off")
+
+
+async def test_prompt_is_rendered_fresh_within_a_session(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
+) -> None:
+    """Only the house snapshot is frozen; who is speaking can change mid-session."""
+    entry = await load_entry(
+        {CONF_HOUSE_STATE: False, CONF_PROMPT: "Talking to {{ user_name }}."}
+    )
+    aioclient_mock.post(COMPLETIONS_URL, content=sse.reply("ok"))
+    mark = await hass.auth.async_create_user("Mark")
+    jenna = await hass.auth.async_create_user("Jenna")
+
+    for user in (mark, jenna):
+        await conversation.async_converse(
+            hass,
+            "hello",
+            None,
+            Context(user_id=user.id),
+            agent_id=_entity_id(hass, entry),
+            satellite_id=KITCHEN,
+        )
+
+    assert _system(aioclient_mock) == "Talking to Jenna."
 
 
 async def test_reload_starts_fresh_sessions(

@@ -26,6 +26,7 @@ from .const import (
     DEFAULT_MODEL,
     DEFAULT_SESSION_TIMEOUT,
     DOMAIN,
+    HOUSE_SNAPSHOT_MAX_AGE,
     MANUFACTURER,
     REQUEST_TIMEOUT,
     RESET_PHRASES,
@@ -151,11 +152,6 @@ class HermesConversationEntity(
         if self._sessions.enabled and _is_reset(user_input.text):
             return self._start_new_session(origin, user_input, chat_log)
 
-        messages = await self._async_system_messages(user_input)
-
-        # Hermes keeps the transcript itself while a session is live, so the
-        # request carries only the newest turn. Without continuity Hermes is
-        # stateless and the chat log is replayed instead.
         session_id: str | None = None
         if self._sessions.enabled:
             session_id = self._sessions.session_for(origin)
@@ -166,16 +162,28 @@ class HermesConversationEntity(
                 user_input.satellite_id,
                 user_input.device_id,
             )
-            messages.append({"role": "user", "content": user_input.text})
-        else:
+
+        messages = await self._async_system_messages(user_input, origin)
+
+        # Hermes keeps the transcript itself while a session is live, so the
+        # request carries only the newest turn. Without continuity Hermes is
+        # stateless and the chat log, minus the turn being answered, is
+        # replayed instead.
+        if session_id is None:
             messages += [
                 {"role": content.role, "content": content.content}
-                for content in chat_log.content
+                for content in chat_log.content[:-1]
                 if isinstance(
                     content, conversation.UserContent | conversation.AssistantContent
                 )
                 and content.content
             ]
+
+        # The clock changes every minute, so it rides on the newest message,
+        # after everything a provider can cache.
+        messages.append(
+            {"role": "user", "content": f"{clock_line()}\n{user_input.text}"}
+        )
 
         options = self.subentry.data
         stream = self.entry.runtime_data.async_stream_chat(
@@ -245,9 +253,9 @@ class HermesConversationEntity(
         return conversation.async_get_result_from_chat_log(user_input, chat_log)
 
     async def _async_system_messages(
-        self, user_input: conversation.ConversationInput
+        self, user_input: conversation.ConversationInput, origin: str
     ) -> list[dict[str, str]]:
-        """Render the configured prompt and any extra prompt from the pipeline."""
+        """Render the prompt, the pipeline's extra prompt and the house state."""
         messages: list[dict[str, str]] = []
         if prompt := self.subentry.data.get(CONF_PROMPT):
             user_name: str | None = None
@@ -273,13 +281,17 @@ class HermesConversationEntity(
         if user_input.extra_system_prompt:
             _append_system(messages, user_input.extra_system_prompt, "\n")
 
-        # Last on purpose: Hermes puts its own prompt ahead of this message and
-        # providers cache by prefix, so only what follows the clock is recomputed.
-        tail = [clock_line()]
+        # Last, and frozen per session: Hermes sends this message ahead of the
+        # tool schemas and the transcript, so a change here re-bills all of it.
         if self.subentry.data.get(CONF_HOUSE_STATE, DEFAULT_HOUSE_STATE):
-            house = house_block(self.hass)
-            _LOGGER.debug("House state block is %d characters", len(house))
-            tail.append(house)
-        _append_system(messages, "\n".join(tail), "\n\n")
+            house = self._sessions.snapshot_for(
+                origin, self._take_house_snapshot, HOUSE_SNAPSHOT_MAX_AGE
+            )
+            _append_system(messages, house, "\n\n")
 
         return messages
+
+    def _take_house_snapshot(self) -> str:
+        house = house_block(self.hass)
+        _LOGGER.debug("Took a house state snapshot of %d characters", len(house))
+        return house

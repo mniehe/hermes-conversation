@@ -22,25 +22,21 @@ from custom_components.hermes_conversation.const import (
     DEFAULT_PROMPT,
     DOMAIN,
 )
-from custom_components.hermes_conversation.house import CLOCK_PREFIX, HEADER
+from custom_components.hermes_conversation.house import CLOCK_PREFIX
 
 from . import sse
 from .conftest import EntryLoader, expose
 from .const import COMPLETIONS_URL, PROFILE
 
 # The house-state block is on by default; tests that pin the exact system
-# message switch it off. The clock is always appended, so they read the
-# prompt part through _prompt().
+# message switch it off.
 NO_HOUSE = {CONF_HOUSE_STATE: False}
-CLOCK_MARKER = f"\n\n{CLOCK_PREFIX}"
+HOUSE_MARKER = "\n\nHouse state at "
 
 
 def _prompt(messages: list[dict[str, str]]) -> str:
-    """Return the system message without the trailing clock line."""
     assert messages[0]["role"] == "system"
-    prompt, marker, _ = messages[0]["content"].rpartition(CLOCK_MARKER)
-    assert marker
-    return prompt
+    return messages[0]["content"]
 
 
 def _reply(text: str) -> bytes:
@@ -246,7 +242,30 @@ async def test_extra_system_prompt_is_sent(
     assert _prompt(messages) == "This request came from the kitchen satellite."
 
 
-async def test_no_prompt_still_sends_the_clock(
+async def test_clock_leads_the_user_message(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    load_entry: EntryLoader,
+    freezer,
+) -> None:
+    """The clock changes every minute, so it rides on the newest message."""
+    freezer.move_to("2026-09-05 18:20:00+00:00")
+    entry = await load_entry({**NO_HOUSE, CONF_PROMPT: "You are terse."})
+    aioclient_mock.post(COMPLETIONS_URL, content=_reply("ok"))
+
+    await _converse(hass, "hello", _entity_id(hass, entry))
+
+    messages = aioclient_mock.mock_calls[-1][2]["messages"]
+    assert messages == [
+        {"role": "system", "content": "You are terse."},
+        {
+            "role": "user",
+            "content": "Current time: Saturday 2026-09-05 11:20 PDT\nhello",
+        },
+    ]
+
+
+async def test_no_prompt_sends_no_system_message(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
 ) -> None:
     entry = await load_entry(NO_HOUSE)
@@ -255,9 +274,8 @@ async def test_no_prompt_still_sends_the_clock(
     await _converse(hass, "hello", _entity_id(hass, entry))
 
     messages = aioclient_mock.mock_calls[-1][2]["messages"]
-    assert messages[0]["role"] == "system"
+    assert [m["role"] for m in messages] == ["user"]
     assert messages[0]["content"].startswith(CLOCK_PREFIX)
-    assert HEADER not in messages[0]["content"]
 
 
 async def test_configured_timeout_is_applied(
@@ -385,8 +403,8 @@ async def test_house_state_trails_the_prompt(
     await _converse(hass, "hello", _entity_id(hass, entry))
 
     content = aioclient_mock.mock_calls[-1][2]["messages"][0]["content"]
-    assert content.startswith(f"You are terse.\n\n{CLOCK_PREFIX}")
-    assert content.endswith(f"\n{HEADER}\nNo area:\n  Kitchen Lights: on")
+    assert content.startswith(f"You are terse.{HOUSE_MARKER}")
+    assert content.endswith("\nNo area:\n  Kitchen Lights: on")
 
 
 async def test_house_state_without_prompt_stands_alone(
@@ -399,15 +417,11 @@ async def test_house_state_without_prompt_stands_alone(
 
     messages = aioclient_mock.mock_calls[-1][2]["messages"]
     assert messages[0]["role"] == "system"
-    assert messages[0]["content"].startswith(CLOCK_PREFIX)
-    assert HEADER in messages[0]["content"]
+    assert messages[0]["content"].startswith(HOUSE_MARKER.lstrip())
 
 
 async def test_house_state_changes_only_the_tail(
-    hass: HomeAssistant,
-    aioclient_mock: AiohttpClientMocker,
-    load_entry: EntryLoader,
-    freezer,
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
 ) -> None:
     """The block must stay behind the prompt: whatever precedes it is cacheable."""
     expose(hass, "light.kitchen", "Kitchen Lights", "on")
@@ -417,14 +431,11 @@ async def test_house_state_changes_only_the_tail(
     await _converse(hass, "hello", _entity_id(hass, entry))
     first = aioclient_mock.mock_calls[-1][2]["messages"][0]["content"]
 
-    freezer.tick(90)
     hass.states.async_set("light.kitchen", "off", {"friendly_name": "Kitchen Lights"})
     await _converse(hass, "hello again", _entity_id(hass, entry))
     second = aioclient_mock.mock_calls[-1][2]["messages"][0]["content"]
 
-    marker = "\n\nCurrent time: "
-    assert first.split(marker)[0] == second.split(marker)[0]
-    assert first != second
+    assert first.split(HOUSE_MARKER)[0] == second.split(HOUSE_MARKER)[0]
     assert second.endswith("Kitchen Lights: off")
 
 
@@ -439,7 +450,7 @@ async def test_house_state_follows_the_pipeline_prompt(
     )
 
     content = aioclient_mock.mock_calls[-1][2]["messages"][0]["content"]
-    assert content.startswith(f"You are terse.\nFrom the kitchen.\n\n{CLOCK_PREFIX}")
+    assert content.startswith(f"You are terse.\nFrom the kitchen.{HOUSE_MARKER}")
 
 
 async def test_house_state_is_sent_on_the_replay_path(
@@ -452,8 +463,9 @@ async def test_house_state_is_sent_on_the_replay_path(
 
     messages = aioclient_mock.mock_calls[-1][2]["messages"]
     assert messages[0]["role"] == "system"
-    assert "\n\nCurrent time: " in messages[0]["content"]
-    assert messages[-1] == {"role": "user", "content": "hello"}
+    assert HOUSE_MARKER in messages[0]["content"]
+    assert messages[-1]["content"].startswith(CLOCK_PREFIX)
+    assert messages[-1]["content"].endswith("\nhello")
 
 
 async def test_default_prompt_previews_without_warnings(

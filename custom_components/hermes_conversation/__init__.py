@@ -28,7 +28,7 @@ from .const import (
     DEFAULT_PROMPT,
     DOMAIN,
     ISSUE_PROFILE_IGNORED,
-    MINOR_VERSION_GUARDED_PROMPT,
+    MINOR_VERSION_DEFAULT_PROMPT,
     MINOR_VERSION_HOUSE_STATE,
     PROMPT_BEFORE_HOUSE_STATE,
     SUBENTRY_TYPE_CONVERSATION,
@@ -121,7 +121,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         data = dict(subentry.data)
         if entry.minor_version < MINOR_VERSION_HOUSE_STATE:
             _add_house_state(data)
-        if entry.minor_version < MINOR_VERSION_GUARDED_PROMPT:
+        if entry.minor_version < MINOR_VERSION_DEFAULT_PROMPT:
             _refresh_default_prompt(data)
         if data != dict(subentry.data):
             hass.config_entries.async_update_subentry(entry, subentry, data=data)

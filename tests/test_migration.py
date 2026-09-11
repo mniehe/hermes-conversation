@@ -10,6 +10,7 @@ from custom_components.hermes_conversation.const import (
     DEFAULT_PROMPT,
     PROMPT_BEFORE_GUARDS,
     PROMPT_BEFORE_HOUSE_STATE,
+    PROMPT_BEFORE_SNAPSHOT,
 )
 
 from .conftest import EntryLoader
@@ -65,6 +66,26 @@ async def test_customised_prompt_survives_the_guard_refresh(
 ) -> None:
     entry = await load_entry(
         {CONF_PROMPT: "You are terse.", CONF_HOUSE_STATE: True}, minor_version=2
+    )
+
+    assert _agent(entry) == {CONF_PROMPT: "You are terse.", CONF_HOUSE_STATE: True}
+
+
+async def test_guarded_default_gets_the_snapshot_wording(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
+) -> None:
+    entry = await load_entry(
+        {CONF_PROMPT: PROMPT_BEFORE_SNAPSHOT, CONF_HOUSE_STATE: True}, minor_version=3
+    )
+
+    assert _agent(entry) == {CONF_PROMPT: DEFAULT_PROMPT, CONF_HOUSE_STATE: True}
+
+
+async def test_customised_prompt_survives_the_snapshot_refresh(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
+) -> None:
+    entry = await load_entry(
+        {CONF_PROMPT: "You are terse.", CONF_HOUSE_STATE: True}, minor_version=3
     )
 
     assert _agent(entry) == {CONF_PROMPT: "You are terse.", CONF_HOUSE_STATE: True}

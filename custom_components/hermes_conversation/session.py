@@ -47,12 +47,20 @@ class SessionTracker:
 
         session = self._sessions.get(origin)
         if session is not None:
-            session.last_used = now
             return session.session_id
 
         session = _Session(f"{SESSION_ID_PREFIX}{uuid.uuid4().hex}", now)
         self._sessions[origin] = session
         return session.session_id
+
+    def touch(self, origin: str) -> None:
+        """Restart the idle countdown for ``origin`` after a completed turn."""
+        if session := self._sessions.get(origin):
+            session.last_used = self._clock()
+
+    def reset(self, origin: str) -> None:
+        """Forget ``origin``'s session so its next turn starts a fresh one."""
+        self._sessions.pop(origin, None)
 
     def _prune(self, now: float) -> None:
         expired = [

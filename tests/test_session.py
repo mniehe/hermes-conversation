@@ -1,7 +1,9 @@
 """Turns from one satellite share a Hermes session until it goes idle."""
 
 from http import HTTPStatus
+from unittest.mock import patch
 
+import pytest
 from homeassistant.components import conversation
 from homeassistant.const import CONF_PROMPT
 from homeassistant.core import Context, HomeAssistant
@@ -14,6 +16,7 @@ from custom_components.hermes_conversation.const import (
     CONF_HOUSE_STATE,
     CONF_SESSION_TIMEOUT,
     DOMAIN,
+    RESET_REPLY,
     SESSION_ID_HEADER,
 )
 from custom_components.hermes_conversation.session import (
@@ -61,9 +64,40 @@ def test_tracker_activity_extends_session() -> None:
 
     first = tracker.session_for(KITCHEN)
     clock.now += 40
-    tracker.session_for(KITCHEN)
+    tracker.touch(KITCHEN)
     clock.now += 40
     assert tracker.session_for(KITCHEN) == first
+
+
+def test_tracker_lookup_alone_does_not_extend_session() -> None:
+    """A turn that never completes must not keep the session alive."""
+    clock = FakeClock()
+    tracker = SessionTracker(60, clock)
+
+    first = tracker.session_for(KITCHEN)
+    clock.now += 40
+    tracker.session_for(KITCHEN)
+    clock.now += 40
+    assert tracker.session_for(KITCHEN) != first
+
+
+def test_tracker_reset_starts_fresh_session() -> None:
+    tracker = SessionTracker(60, FakeClock())
+
+    first = tracker.session_for(KITCHEN)
+    tracker.reset(KITCHEN)
+
+    assert tracker.session_for(KITCHEN) != first
+
+
+def test_tracker_reset_leaves_other_origins() -> None:
+    tracker = SessionTracker(60, FakeClock())
+
+    office = tracker.session_for(OFFICE)
+    tracker.session_for(KITCHEN)
+    tracker.reset(KITCHEN)
+
+    assert tracker.session_for(OFFICE) == office
 
 
 def test_tracker_keeps_origins_apart() -> None:
@@ -115,6 +149,10 @@ async def _converse(
 def _session_header(aioclient_mock: AiohttpClientMocker) -> str | None:
     headers = aioclient_mock.mock_calls[-1][3]
     return headers.get(SESSION_ID_HEADER) if headers else None
+
+
+def _completions(aioclient_mock: AiohttpClientMocker) -> int:
+    return sum(str(call[1]) == COMPLETIONS_URL for call in aioclient_mock.mock_calls)
 
 
 async def test_session_header_is_sent(
@@ -225,6 +263,92 @@ async def test_reload_starts_fresh_sessions(
     await _converse(hass, entry, "hello", satellite_id=KITCHEN)
 
     assert _session_header(aioclient_mock) != first
+
+
+@pytest.mark.parametrize(
+    "phrase", [" New session. ", "START OVER!", "Reset.", "Slash new.", "/new"]
+)
+async def test_reset_phrase_starts_fresh_session(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    load_entry: EntryLoader,
+    phrase: str,
+) -> None:
+    entry = await load_entry()
+    aioclient_mock.post(COMPLETIONS_URL, content=sse.reply("ok"))
+
+    await _converse(hass, entry, "hello", satellite_id=KITCHEN)
+    first = _session_header(aioclient_mock)
+    result = await _converse(hass, entry, phrase, satellite_id=KITCHEN)
+
+    assert _completions(aioclient_mock) == 1
+    assert result.response.speech["plain"]["speech"] == RESET_REPLY
+
+    await _converse(hass, entry, "hello", satellite_id=KITCHEN)
+    assert _session_header(aioclient_mock) != first
+
+
+@pytest.mark.parametrize(
+    "text", ["new session please", "let's start over the story", "reset the timer"]
+)
+async def test_reset_phrase_must_be_the_whole_utterance(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    load_entry: EntryLoader,
+    text: str,
+) -> None:
+    entry = await load_entry()
+    aioclient_mock.post(COMPLETIONS_URL, content=sse.reply("ok"))
+
+    await _converse(hass, entry, "hello", satellite_id=KITCHEN)
+    first = _session_header(aioclient_mock)
+    await _converse(hass, entry, text, satellite_id=KITCHEN)
+
+    assert _completions(aioclient_mock) == 2
+    assert _session_header(aioclient_mock) == first
+
+
+async def test_reset_phrase_leaves_other_satellites(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
+) -> None:
+    entry = await load_entry()
+    aioclient_mock.post(COMPLETIONS_URL, content=sse.reply("ok"))
+
+    await _converse(hass, entry, "hello", satellite_id=OFFICE)
+    office = _session_header(aioclient_mock)
+    await _converse(hass, entry, "new session", satellite_id=KITCHEN)
+    await _converse(hass, entry, "hello", satellite_id=OFFICE)
+
+    assert _session_header(aioclient_mock) == office
+
+
+async def test_reset_phrase_goes_to_hermes_without_continuity(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
+) -> None:
+    """With every turn already a fresh session there is nothing to reset."""
+    entry = await load_entry({CONF_SESSION_TIMEOUT: 0})
+    aioclient_mock.post(COMPLETIONS_URL, content=sse.reply("ok"))
+
+    result = await _converse(hass, entry, "new session", satellite_id=KITCHEN)
+
+    assert _completions(aioclient_mock) == 1
+    assert result.response.speech["plain"]["speech"] == "ok"
+
+
+async def test_only_completed_turns_extend_the_session(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
+) -> None:
+    entry = await load_entry()
+    aioclient_mock.post(COMPLETIONS_URL, exc=TimeoutError)
+
+    with patch.object(SessionTracker, "touch") as touch:
+        await _converse(hass, entry, "hello", satellite_id=KITCHEN)
+        touch.assert_not_called()
+
+        aioclient_mock.clear_requests()
+        aioclient_mock.post(COMPLETIONS_URL, content=sse.reply("ok"))
+        await _converse(hass, entry, "hello", satellite_id=KITCHEN)
+        touch.assert_called_once_with(KITCHEN)
 
 
 async def test_refused_continuation_is_an_error_response(

@@ -28,6 +28,9 @@ from .const import (
     DOMAIN,
     MANUFACTURER,
     REQUEST_TIMEOUT,
+    RESET_PHRASES,
+    RESET_REPLY,
+    RESET_TRIM,
     SECONDS_PER_MINUTE,
     SUBENTRY_TYPE_CONVERSATION,
 )
@@ -49,6 +52,12 @@ def _satellite_context(hass: HomeAssistant, satellite_id: str | None) -> dict[st
         "satellite_name": state.name if state else None,
         "area_name": area_name(hass, satellite_id),
     }
+
+
+def _is_reset(text: str) -> bool:
+    """Return whether the whole utterance asks for a new session."""
+    utterance = " ".join(text.split()).strip(RESET_TRIM).casefold()
+    return utterance in RESET_PHRASES
 
 
 def _append_system(messages: list[dict[str, str]], text: str, separator: str) -> None:
@@ -136,6 +145,12 @@ class HermesConversationEntity(
         chat_log: conversation.ChatLog,
     ) -> conversation.ConversationResult:
         """Send the transcript to Hermes and return its response."""
+        origin = (
+            user_input.satellite_id or user_input.device_id or chat_log.conversation_id
+        )
+        if self._sessions.enabled and _is_reset(user_input.text):
+            return self._start_new_session(origin, user_input, chat_log)
+
         messages = await self._async_system_messages(user_input)
 
         # Hermes keeps the transcript itself while a session is live, so the
@@ -143,11 +158,6 @@ class HermesConversationEntity(
         # stateless and the chat log is replayed instead.
         session_id: str | None = None
         if self._sessions.enabled:
-            origin = (
-                user_input.satellite_id
-                or user_input.device_id
-                or chat_log.conversation_id
-            )
             session_id = self._sessions.session_for(origin)
             _LOGGER.debug(
                 "Hermes session %s for %s (satellite=%s device=%s)",
@@ -202,6 +212,9 @@ class HermesConversationEntity(
                 translation_domain=DOMAIN, translation_key="cannot_connect"
             ) from err
 
+        if session_id:
+            self._sessions.touch(origin)
+
         # A stream of whitespace still produces AssistantContent, so the chat
         # log helper would treat it as a valid — but silent — answer.
         last = chat_log.content[-1]
@@ -213,6 +226,22 @@ class HermesConversationEntity(
                 translation_domain=DOMAIN, translation_key="empty_response"
             )
 
+        return conversation.async_get_result_from_chat_log(user_input, chat_log)
+
+    def _start_new_session(
+        self,
+        origin: str,
+        user_input: conversation.ConversationInput,
+        chat_log: conversation.ChatLog,
+    ) -> conversation.ConversationResult:
+        """Drop the origin's Hermes session and confirm without asking Hermes."""
+        self._sessions.reset(origin)
+        _LOGGER.debug("Hermes session reset for %s", origin)
+        chat_log.async_add_assistant_content_without_tools(
+            conversation.AssistantContent(
+                agent_id=user_input.agent_id, content=RESET_REPLY
+            )
+        )
         return conversation.async_get_result_from_chat_log(user_input, chat_log)
 
     async def _async_system_messages(

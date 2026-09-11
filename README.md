@@ -197,8 +197,15 @@ A routed turn still falls back through the profile's `fallback_providers`.
 
 Each satellite gets its own Hermes session and keeps it across turns, so
 Hermes remembers the conversation and its prompt cache stays warm. A satellite
-that goes quiet longer than the idle timeout starts over. The Assist dialog
-keys on its own conversation instead.
+that goes quiet longer than the idle timeout starts over; only answered turns
+count as activity, so failed requests do not keep a session alive. The Assist
+dialog keys on its own conversation instead.
+
+To start over sooner, say "new session", "start over", "reset", or "slash new"
+(or type `/new`). It must be the whole request; anything longer goes to Hermes
+as usual. The integration drops that satellite's session and replies "Starting
+a new session." without calling Hermes. Restarting Hermes does not do this:
+the session id lives in Home Assistant, and Hermes reloads the same transcript.
 
 ## Announcing on one satellite
 

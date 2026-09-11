@@ -42,6 +42,15 @@ MIN_SESSION_TIMEOUT: Final = 0
 MAX_SESSION_TIMEOUT: Final = 1440
 SECONDS_PER_MINUTE: Final = 60
 
+# Hermes takes no commands on a continued session and the session id lives
+# here, so a satellite can only leave a session by saying one of these as the
+# whole utterance. Compared after lowercasing and trimming punctuation.
+RESET_PHRASES: Final = frozenset(
+    {"new session", "start over", "reset", "slash new", "/new"}
+)
+RESET_TRIM: Final = " .,!?"
+RESET_REPLY: Final = "Starting a new session."
+
 # Pre-filled for new agents as a worked example of the template variables;
 # spoken replies need different manners from typed ones. The editor previews
 # the template with no variables, so each one is guarded with "is defined"

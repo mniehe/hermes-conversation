@@ -67,14 +67,15 @@ _PROMPT_LEAD: Final = (
     'When a command names no room, assume the {{ area_name or "same" }} area. '
     "Send any announcements to {{ satellite_id }}.{% endif %}",
 )
-_ANSWER_FROM_SNAPSHOT: Final = (
+_ANSWER_AND_ACT: Final = (
     "Each message starts with the current time. The state of the house is "
-    "listed at the end of these instructions, as of the time shown there. "
-    "Answer from it directly unless the answer depends on something that "
-    "changes quickly, then check with a tool. Call tools to act, and confirm "
-    "briefly after acting."
+    "listed at the end of these instructions, as of the time shown there; it "
+    "does not include changes since then, even your own. Answer from it "
+    "directly unless the answer depends on something that changes quickly, "
+    "then check with a tool. To act, call the tool without checking state "
+    "first; its result says what changed. Confirm briefly after acting."
 )
-DEFAULT_PROMPT: Final = "\n".join((*_PROMPT_LEAD, _ANSWER_FROM_SNAPSHOT))
+DEFAULT_PROMPT: Final = "\n".join((*_PROMPT_LEAD, _ANSWER_AND_ACT))
 
 # Earlier shipped defaults. An upgrade replaces a prompt still matching one
 # of them and leaves anything else alone.
@@ -103,10 +104,19 @@ _ANSWER_FROM_BLOCK: Final = (
 )
 PROMPT_BEFORE_GUARDS: Final = "\n".join((*_UNGUARDED_LEAD, _ANSWER_FROM_BLOCK))
 PROMPT_BEFORE_SNAPSHOT: Final = "\n".join((*_PROMPT_LEAD, _ANSWER_FROM_BLOCK))
+_ANSWER_FROM_SNAPSHOT: Final = (
+    "Each message starts with the current time. The state of the house is "
+    "listed at the end of these instructions, as of the time shown there. "
+    "Answer from it directly unless the answer depends on something that "
+    "changes quickly, then check with a tool. Call tools to act, and confirm "
+    "briefly after acting."
+)
+PROMPT_BEFORE_DIRECT_ACTION: Final = "\n".join((*_PROMPT_LEAD, _ANSWER_FROM_SNAPSHOT))
 SUPERSEDED_PROMPTS: Final = (
     PROMPT_BEFORE_HOUSE_STATE,
     PROMPT_BEFORE_GUARDS,
     PROMPT_BEFORE_SNAPSHOT,
+    PROMPT_BEFORE_DIRECT_ACTION,
 )
 
 # Appended after the prompt: the state of every entity exposed to Assist, so
@@ -117,10 +127,10 @@ CONF_HOUSE_STATE: Final = "house_state"
 DEFAULT_HOUSE_STATE: Final = True
 HOUSE_SNAPSHOT_MAX_AGE: Final = 10 * SECONDS_PER_MINUTE
 
-# Config entry minor versions: 2 introduced CONF_HOUSE_STATE on agents; 3 and
-# 4 each refreshed the default prompt.
+# Config entry minor versions: 2 introduced CONF_HOUSE_STATE on agents; 3 to
+# 5 each refreshed the default prompt.
 MINOR_VERSION_HOUSE_STATE: Final = 2
-MINOR_VERSION_DEFAULT_PROMPT: Final = 4
+MINOR_VERSION_DEFAULT_PROMPT: Final = 5
 CONFIG_MINOR_VERSION: Final = MINOR_VERSION_DEFAULT_PROMPT
 
 # Whole domains the agent may never write to. Alarm panels are included even

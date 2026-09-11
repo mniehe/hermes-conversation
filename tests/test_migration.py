@@ -8,6 +8,7 @@ from custom_components.hermes_conversation.const import (
     CONF_HOUSE_STATE,
     CONFIG_MINOR_VERSION,
     DEFAULT_PROMPT,
+    PROMPT_BEFORE_DIRECT_ACTION,
     PROMPT_BEFORE_GUARDS,
     PROMPT_BEFORE_HOUSE_STATE,
     PROMPT_BEFORE_SNAPSHOT,
@@ -86,6 +87,27 @@ async def test_customised_prompt_survives_the_snapshot_refresh(
 ) -> None:
     entry = await load_entry(
         {CONF_PROMPT: "You are terse.", CONF_HOUSE_STATE: True}, minor_version=3
+    )
+
+    assert _agent(entry) == {CONF_PROMPT: "You are terse.", CONF_HOUSE_STATE: True}
+
+
+async def test_snapshot_default_gets_the_act_directly_wording(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
+) -> None:
+    entry = await load_entry(
+        {CONF_PROMPT: PROMPT_BEFORE_DIRECT_ACTION, CONF_HOUSE_STATE: True},
+        minor_version=4,
+    )
+
+    assert _agent(entry) == {CONF_PROMPT: DEFAULT_PROMPT, CONF_HOUSE_STATE: True}
+
+
+async def test_customised_prompt_survives_the_act_directly_refresh(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, load_entry: EntryLoader
+) -> None:
+    entry = await load_entry(
+        {CONF_PROMPT: "You are terse.", CONF_HOUSE_STATE: True}, minor_version=4
     )
 
     assert _agent(entry) == {CONF_PROMPT: "You are terse.", CONF_HOUSE_STATE: True}
